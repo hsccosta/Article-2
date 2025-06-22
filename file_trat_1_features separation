@@ -1,0 +1,57 @@
+library(sf)
+library(terra)
+library(dplyr)
+library(foreach)
+library(doParallel)
+
+# Caminhos
+dir_dados <- "C:/Users/DELL/Desktop/Artigo_2_TC/Arquivos_ArcGis/LULC_GDEs_50m"
+
+# Substitua com o caminho real
+shapefile <- file.path(dir_dados, "feicoes.shp")
+saida_dir <- file.path(dir_dados, "recortes_por_feicao")
+dir.create(saida_dir, showWarnings = FALSE)
+
+# Anos e rasters
+anos <- 2016:2023
+rasters <- setNames(paste0(dir_dados, "/raster_", anos, ".tif"), anos)
+
+# Carregar feições
+feicoes <- st_read(shapefile)
+ids <- feicoes$ID  # Substitua se o campo ID tiver outro nome
+
+# Inicializar paralelização
+num_cores <- max(1, detectCores() - 1)
+cl <- makeCluster(num_cores)
+registerDoParallel(cl)
+
+# Processar feições
+foreach(i = 1:nrow(feicoes), .packages = c("terra", "sf")) %dopar% {
+  feicao <- feicoes[i, ]
+  id <- as.character(feicao$ID)
+  feicao_vect <- terra::vect(feicao)
+  
+  # Pasta da feição
+  pasta_feicao <- file.path(saida_dir, paste0("feicao_", id))
+  dir.create(pasta_feicao, showWarnings = FALSE, recursive = TRUE)
+  
+  for (ano in anos) {
+    raster_path <- rasters[as.character(ano)]
+    raster_base <- terra::rast(raster_path)
+    
+    # Reprojetar feição, se necessário
+    feicao_proj <- terra::project(feicao_vect, crs(raster_base))
+    
+    # Recorte
+    recorte <- terra::mask(terra::crop(raster_base, feicao_proj), feicao_proj)
+    
+    # Caminho de saída
+    nome_saida <- file.path(pasta_feicao, paste0(ano, ".tif"))
+    
+    # Exportar
+    terra::writeRaster(recorte, nome_saida, overwrite = TRUE)
+  }
+}
+
+stopCluster(cl)
+cat("✅ Todos os arquivos foram exportados para subpastas por feição em:\n", saida_dir, "\n")
