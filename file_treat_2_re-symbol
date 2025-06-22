@@ -1,0 +1,88 @@
+library(terra)
+library(xml2)
+library(tidyverse)
+library(tools)
+library(tcltk)
+library(grDevices)
+
+# 1. Escolher a pasta onde estão os arquivos .tif
+pasta_raiz <- tk_choose.dir(caption = "Selecione a pasta onde estão os arquivos .tif")
+if (is.na(pasta_raiz)) stop("❌ Nenhuma pasta selecionada.")
+
+# 2. Apagar arquivos .png antigos
+pngs_antigos <- list.files(pasta_raiz, pattern = "\\.png$", recursive = TRUE, full.names = TRUE)
+if (length(pngs_antigos) > 0) {
+  file.remove(pngs_antigos)
+  cat("🗑️  Arquivos .png antigos removidos.\n")
+}
+
+# 3. Selecionar arquivo de simbologia MapBiomas (QML)
+qml_path <- tk_choose.files(caption = "Selecione o arquivo 'brazil_col8.qml'")
+if (length(qml_path) == 0) stop("❌ Nenhum arquivo QML selecionado.")
+
+# 4. Extrair legenda do QML (classe x cor)
+qml <- read_xml(qml_path)
+cores_nodes <- xml_find_all(qml, ".//paletteEntry")
+legenda_mapbiomas <- tibble(
+  classe = as.integer(xml_attr(cores_nodes, "value")),
+  cor = xml_attr(cores_nodes, "color")
+)
+cores_map <- setNames(legenda_mapbiomas$cor, legenda_mapbiomas$classe)
+
+# 5. Listar todos os arquivos .tif
+tifs <- list.files(pasta_raiz, pattern = "\\.tif$", recursive = TRUE, full.names = TRUE)
+cat("🔍 Encontrados", length(tifs), "arquivos .tif\n")
+
+# 6. Processar cada TIFF e gerar JPG colorido
+for (tif_path in tifs) {
+  r <- rast(tif_path)
+  vals <- values(r)[,1]
+  
+  # Substituir NoData por NA
+  nodata <- terra::NAflag(r)
+  if (!is.na(nodata)) {
+    vals[vals == nodata] <- NA
+  }
+  
+  # Matriz da imagem
+  img <- matrix(vals, nrow = nrow(r), ncol = ncol(r), byrow = TRUE)
+  img <- t(apply(img, 2, rev))  # eixo Y invertido
+  
+  # Inicializar imagem RGBA com fundo branco (1,1,1)
+  rgb_img <- array(1, dim = c(dim(img), 3))  # R G B, tudo branco
+  
+  for (classe in names(cores_map)) {
+    hex <- cores_map[[classe]]
+    classe_num <- as.numeric(classe)
+    mask <- img == classe_num
+    
+    if (any(mask, na.rm = TRUE)) {
+      col_rgb <- col2rgb(hex) / 255
+      rgb_img[,,1][mask] <- col_rgb[1]
+      rgb_img[,,2][mask] <- col_rgb[2]
+      rgb_img[,,3][mask] <- col_rgb[3]
+    }
+  }
+  
+  # Nome do JPG baseado no nome do TIF
+  nome_tif <- basename(tif_path)
+  partes <- strsplit(file_path_sans_ext(nome_tif), "_")[[1]]
+  if (length(partes) >= 2) {
+    nome_jpg <- paste0(partes[1], "_", partes[2], ".jpg")
+  } else {
+    nome_jpg <- paste0(file_path_sans_ext(nome_tif), ".jpg")
+  }
+  
+  saida_path <- file.path(dirname(tif_path), nome_jpg)
+  
+  # Salvar imagem JPG
+  jpeg(filename = saida_path, width = ncol(r), height = nrow(r), quality = 100)
+  par(mar = c(0,0,0,0))
+  plot.new()
+  rasterImage(rgb_img, 0, 0, 1, 1)
+  dev.off()
+  
+  cat("✅ JPG gerado:", saida_path, "\n")
+}
+
+cat("🎉 Fim! Todos os arquivos .jpg foram gerados com cores MapBiomas e fundo branco.\n")
