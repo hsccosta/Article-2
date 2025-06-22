@@ -5,7 +5,7 @@ library(foreach)
 library(doParallel)
 
 # Caminhos
-dir_dados <- "C:/Users/DELL/Desktop/Artigo_2_TC/Arquivos_ArcGis/LULC_GDEs_50m"
+dir_dados <- "C:/Users/DELL/Desktop/Artigo 2_TC/Arquivos ArcGis/LULC_GDEs_50m/GDEs_50m_lulc_1m"
 
 # Substitua com o caminho real
 shapefile <- file.path(dir_dados, "feicoes.shp")
@@ -54,4 +54,4 @@ foreach(i = 1:nrow(feicoes), .packages = c("terra", "sf")) %dopar% {
 }
 
 stopCluster(cl)
-cat("✅ Todos os arquivos foram exportados para subpastas por feição em:\n", saida_dir, "\n")
+cat("✅ Todos os arquivos foram exportados para subpastas por feição em:/n", saida_dir, "/n")
