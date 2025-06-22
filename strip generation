@@ -1,0 +1,70 @@
+library(magick)
+library(tcltk)
+library(tools)
+
+# Interface para escolha da pasta principal
+main_dir <- tk_choose.dir(caption = "Selecione a pasta principal com as feições")
+
+# Parâmetros
+anos <- 2016:2023
+saida_dir <- file.path(main_dir, "tiras_geradas")
+dir.create(saida_dir, showWarnings = FALSE)
+
+# Arquivo para registrar FIDs com sucesso
+fids_validos <- file.path(saida_dir, "fids_validos.txt")
+if (file.exists(fids_validos)) file.remove(fids_validos)
+
+# Função segura para ler imagem com robustez
+ler_imagem_segura <- function(caminho) {
+  if (file.exists(caminho)) {
+    tryCatch(image_read(caminho), error = function(e) NULL)
+  } else {
+    warning(paste("⚠️ Imagem não encontrada:", caminho))
+    NULL
+  }
+}
+
+# Processar todas as feições
+fids <- list.dirs(main_dir, full.names = FALSE, recursive = FALSE)
+fids <- fids[grepl("^feicao_", fids)]
+
+for (fid in fids) {
+  cat("🔄 Processando", fid, "\n")
+  imagens_ano <- list()
+  
+  for (ano in anos) {
+    caminho_img <- file.path(main_dir, fid, paste0(ano, ".jpg"))
+    img <- ler_imagem_segura(caminho_img)
+    
+    if (!is.null(img)) {
+      # Criar imagem com o texto do ano acima
+      largura <- image_info(img)$width
+      texto <- image_blank(width = largura, height = 50, color = "white") %>%
+        image_annotate(text = as.character(ano), size = 30, color = "black", gravity = "center")
+      
+      # Desenhar círculo preto fino no limite da imagem (centro com raio quase total)
+      h <- image_info(img)$height
+      w <- image_info(img)$width
+      raio <- min(h, w) / 2 - 1  # pequeno recuo
+      
+      circulo <- paste0("circle ", w/2, ",", h/2, " ", w/2 + raio, ",", h/2)
+      img_circ <- image_draw(img)
+      graphics::symbols(w/2, h/2, circles=raio, inches=FALSE, add=TRUE, fg="black", lwd=0.8)
+      dev.off()
+      
+      # Combina texto e imagem
+      img_final <- c(texto, img_circ) %>% image_append(stack = TRUE)
+      imagens_ano[[as.character(ano)]] <- img_final
+    }
+  }
+  
+  if (length(imagens_ano) > 0) {
+    tira <- image_append(image_join(imagens_ano))
+    saida <- file.path(saida_dir, paste0(fid, "_tira.jpg"))
+    image_write(tira, saida)
+    cat("✅ Tira criada:", saida, "\n")
+    write(fid, file = fids_validos, append = TRUE)
+  } else {
+    cat("❌ Nenhuma imagem válida para", fid, "\n")
+  }
+}
