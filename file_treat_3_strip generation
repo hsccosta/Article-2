@@ -1,70 +1,164 @@
+# Instale os pacotes se ainda não tiver feito
+if (!requireNamespace("magick", quietly = TRUE)) install.packages("magick")
+if (!requireNamespace("svDialogs", quietly = TRUE)) install.packages("svDialogs")
+
 library(magick)
-library(tcltk)
-library(tools)
+library(svDialogs)
+library(tools) # Para file_ext e path_ext_remove
 
-# Interface para escolha da pasta principal
-main_dir <- tk_choose.dir(caption = "Selecione a pasta principal com as feições")
-
-# Parâmetros
-anos <- 2016:2023
-saida_dir <- file.path(main_dir, "tiras_geradas")
-dir.create(saida_dir, showWarnings = FALSE)
-
-# Arquivo para registrar FIDs com sucesso
-fids_validos <- file.path(saida_dir, "fids_validos.txt")
-if (file.exists(fids_validos)) file.remove(fids_validos)
-
-# Função segura para ler imagem com robustez
-ler_imagem_segura <- function(caminho) {
-  if (file.exists(caminho)) {
-    tryCatch(image_read(caminho), error = function(e) NULL)
-  } else {
-    warning(paste("⚠️ Imagem não encontrada:", caminho))
-    NULL
+criar_tiras_temporais_v5_ajuste_lado_a_lado <- function() {
+  # --- 1. Solicitar a pasta-mãe (que contém todas as subpastas com as imagens) ---
+  pasta_raiz_imagens <- dlg_dir(title = "Selecione a PASTA RAIZ que contém todas as subpastas com as imagens JPG numeradas")$res
+  if (is.null(pasta_raiz_imagens) || pasta_raiz_imagens == "") {
+    message("Operação cancelada: Nenhuma pasta raiz selecionada.")
+    return(invisible(NULL))
   }
-}
+  message(paste("Pasta raiz selecionada:", pasta_raiz_imagens))
 
-# Processar todas as feições
-fids <- list.dirs(main_dir, full.names = FALSE, recursive = FALSE)
-fids <- fids[grepl("^feicao_", fids)]
+  # --- 2. Criar a pasta de saída (dentro da pasta raiz) ---
+  pasta_saida <- file.path(pasta_raiz_imagens, "series_temporais_de_lulc_tiradas")
+  if (!dir.exists(pasta_saida)) {
+    if (!dir.create(pasta_saida)) {
+      stop(paste("Erro: Não foi possível criar a pasta de saída em:", pasta_saida,
+                 "\nVerifique as permissões de escrita ou o caminho."))
+    }
+    message(paste("Pasta de saída criada:", pasta_saida))
+  } else {
+    message(paste("Pasta de saída já existe:", pasta_saida))
+  }
 
-for (fid in fids) {
-  cat("🔄 Processando", fid, "\n")
-  imagens_ano <- list()
-  
-  for (ano in anos) {
-    caminho_img <- file.path(main_dir, fid, paste0(ano, ".jpg"))
-    img <- ler_imagem_segura(caminho_img)
+  # --- 3. Detectar todos os arquivos JPG numerados em todas as subpastas ---
+  arquivos_jpg_encontrados <- list.files(
+    path = pasta_raiz_imagens,
+    pattern = "^\\d{4}\\.jpe?g$", # Padrão: começa com 4 dígitos e termina com .jpg/.jpeg
+    ignore.case = TRUE,
+    full.names = TRUE,    # Retorna o caminho completo
+    recursive = TRUE      # PROCURA EM TODAS AS SUBPASTAS
+  )
+
+  if (length(arquivos_jpg_encontrados) == 0) {
+    message("Nenhum arquivo JPG com nomes numéricos (ex: 0001.jpg) encontrado na pasta raiz ou em suas subpastas. Verifique os nomes e a pasta selecionada.")
+    return(invisible(NULL))
+  }
+
+  # Extrair os números dos arquivos para ordenação
+  nomes_base_arquivos <- basename(arquivos_jpg_encontrados)
+  numeros_dos_arquivos <- as.numeric(path_ext_remove(nomes_base_arquivos))
+
+  # Criar um dataframe para manter o caminho original e o número
+  df_arquivos <- data.frame(
+    numero = numeros_dos_arquivos,
+    caminho_completo = arquivos_jpg_encontrados,
+    stringsAsFactors = FALSE
+  )
+
+  # Ordenar os arquivos pelo número para garantir a sequência correta (0001, 0002, ...)
+  df_arquivos <- df_arquivos[order(df_arquivos$numero), ]
+
+  # O número total de imagens a processar será o último número na sequência
+  num_total_imagens_detectado <- max(df_arquivos$numero)
+  message(paste("Número total de imagens JPG detectadas e ordenadas:", num_total_imagens_detectado))
+
+  # --- 4. Definir parâmetros da tira ---
+  imagens_por_tira <- 8
+  ano_inicial <- 2016
+  num_tiras_esperadas <- ceiling(num_total_imagens_detectado / imagens_por_tira)
+
+  # --- NOVO: Definir um tamanho padrão para redimensionar todas as imagens ---
+  # Isso é CRÍTICO para que image_append funcione corretamente
+  largura_padrao <- 500 # Largura desejada para cada imagem na tira (em pixels)
+  altura_padrao <- 500  # Altura desejada para cada imagem na tira (em pixels)
+  tamanho_string <- paste0(largura_padrao, "x", altura_padrao, "!") # "!" força o redimensionamento exato, ignorando proporção
+
+  message(paste0("Todas as imagens serão redimensionadas para ", largura_padrao, "x", altura_padrao, " pixels para a criação da tira."))
+
+  message(paste("Preparando para criar", num_tiras_esperadas, "tiras, cada uma com", imagens_por_tira, "imagens."))
+
+  # --- 5. Loop para criar as tiras ---
+  for (i in 1:num_tiras_esperadas) {
+    # Calcular o intervalo de índices no dataframe df_arquivos para a tira atual
+    indice_inicio_df <- (i - 1) * imagens_por_tira + 1
+    indice_fim_df <- min(i * imagens_por_tira, nrow(df_arquivos))
+
+    # Obter os caminhos e números dos arquivos para a tira atual
+    caminhos_arquivos_tira <- df_arquivos$caminho_completo[indice_inicio_df:indice_fim_df]
+    numeros_arquivos_tira <- df_arquivos$numero[indice_inicio_df:indice_fim_df]
+
+    # Lista para armazenar imagens da tira
+    imagens_tira_processadas <- list()
     
-    if (!is.null(img)) {
-      # Criar imagem com o texto do ano acima
-      largura <- image_info(img)$width
-      texto <- image_blank(width = largura, height = 50, color = "white") %>%
-        image_annotate(text = as.character(ano), size = 30, color = "black", gravity = "center")
+    # Processar cada imagem da tira
+    for (j in seq_along(caminhos_arquivos_tira)) {
+      caminho_arquivo_atual <- caminhos_arquivos_tira[j]
+      numero_arquivo_atual <- numeros_arquivos_tira[j]
+
+      img_base <- NULL # Inicializa imagem base como NULL
+
+      # Tenta ler a imagem
+      if (file.exists(caminho_arquivo_atual)) {
+        img_base <- tryCatch(
+          image_read(caminho_arquivo_atual),
+          error = function(e) {
+            warning(paste0("Erro ao ler imagem '", basename(caminho_arquivo_atual), "': ", e$message, ". Usando imagem preta."))
+            return(NULL) # Retorna NULL em caso de erro grave na leitura
+          }
+        )
+      } else {
+        warning(paste("Arquivo esperado não encontrado (faltante na sequência):", caminho_arquivo_atual, ". Usando imagem preta nesta tira."))
+        # Não precisa setar img_base para NULL aqui, o if seguinte lidará com isso
+      }
+
+      # Se a leitura falhou ou o arquivo não existe, cria uma imagem preta
+      if (is.null(img_base)) {
+        img_base <- image_blank(largura_padrao, altura_padrao, "black") # Usa o tamanho padrão
+      } else {
+        # NOVO: Redimensionar a imagem para o tamanho padrão
+        img_base <- image_resize(img_base, geometry = tamanho_string)
+      }
+
+      # Calcular o ano (com base na posição na sequência global)
+      ano_para_anotar <- ano_inicial + ((numero_arquivo_atual - 1) %% imagens_por_tira)
+
+      # Adicionar o ano à imagem
+      # NOVO: Ajuste de cor e possível ajuste de localização
+      img_com_ano <- image_annotate(
+        img_base,
+        text = as.character(ano_para_anotar),
+        size = 24, # Aumentei o tamanho da fonte para 24
+        font = "Times-New-Roman", # Nome comum para a fonte
+        color = "white",          # Cor branca para contraste
+        strokecolor = "black",    # Borda preta para melhor visibilidade em fundos claros
+        stroke = 1,               # Espessura da borda
+        location = "+15+15",      # Ligeiro ajuste na localização (X+15, Y+15)
+        gravity = "NorthWest"     # Canto superior esquerdo
+      )
+      imagens_tira_processadas[[j]] <- img_com_ano
+    }
+
+    # Juntar as imagens horizontalmente
+    if (length(imagens_tira_processadas) > 0) {
+      tira_final <- image_append(image_join(imagens_tira_processadas)) # Já estão no mesmo tamanho
+
+      # Salvar a tira
+      nome_arquivo_saida <- sprintf("%04d.jpg", i)
+      caminho_arquivo_saida <- file.path(pasta_saida, nome_arquivo_saida)
       
-      # Desenhar círculo preto fino no limite da imagem (centro com raio quase total)
-      h <- image_info(img)$height
-      w <- image_info(img)$width
-      raio <- min(h, w) / 2 - 1  # pequeno recuo
-      
-      circulo <- paste0("circle ", w/2, ",", h/2, " ", w/2 + raio, ",", h/2)
-      img_circ <- image_draw(img)
-      graphics::symbols(w/2, h/2, circles=raio, inches=FALSE, add=TRUE, fg="black", lwd=0.8)
-      dev.off()
-      
-      # Combina texto e imagem
-      img_final <- c(texto, img_circ) %>% image_append(stack = TRUE)
-      imagens_ano[[as.character(ano)]] <- img_final
+      tryCatch({
+        image_write(tira_final, path = caminho_arquivo_saida, format = "jpg", quality = 90) # Adicionei qualidade
+        message(paste("Tira", nome_arquivo_saida, "criada e salva."))
+      }, error = function(e_save) {
+        warning(paste0("Erro ao salvar a tira '", nome_arquivo_saida, "': ", e_save$message))
+      })
+    } else {
+      warning(paste("Nenhuma imagem válida ou substituta foi processada para a tira", i, ". Tira pulada."))
     }
   }
-  
-  if (length(imagens_ano) > 0) {
-    tira <- image_append(image_join(imagens_ano))
-    saida <- file.path(saida_dir, paste0(fid, "_tira.jpg"))
-    image_write(tira, saida)
-    cat("✅ Tira criada:", saida, "\n")
-    write(fid, file = fids_validos, append = TRUE)
-  } else {
-    cat("❌ Nenhuma imagem válida para", fid, "\n")
-  }
+
+  message("\nProcesso concluído.")
+  message(paste("As tiras foram salvas em:", normalizePath(pasta_saida, winslash = "/")))
+  return(invisible(NULL))
 }
+
+# --- Chamar a função para executar o script ---
+# Rode esta linha no seu console R ou clique em 'Source' no RStudio
+criar_tiras_temporais_v5_ajuste_lado_a_lado()
