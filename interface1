@@ -12,19 +12,18 @@ excel_file <- tk_choose.files(caption = "Selecione o arquivo Excel com nascentes
 if (length(excel_file) == 0 || excel_file == "") stop("Nenhum arquivo selecionado.")
 df <- read_excel(excel_file)
 
-# Função para legenda
+# Função da legenda
 legenda_lulc <- function() {
   classes <- data.frame(
     nome = c("Formação Florestal", "Floresta Plantada", "Pastagem",
              "Mosaico de Usos", "Cultura Temporária", "Rios e Lagos",
-             "Área Urbanizada", "Campo Alagado e Área Pantanosa",
-             "Não Observado"),
+             "Área Urbanizada", "Campo Alagado e Área Pantanosa", "Não Observado"),
     cor = c("#1f8d49", "#7a5900", "#edde8e", "#ffefc3",
             "#C27BA0", "#2532e4", "#d4271e", "#519799", "#ffffff")
   )
   
   tags$div(
-    tags$h5("Legenda de Classes de Uso e Cobertura do Solo"),
+    tags$h5("Classes de Uso e Cobertura da Terra"),
     tags$div(style = "display: flex; flex-direction: column;",
              lapply(1:nrow(classes), function(i) {
                tags$div(style = "display: flex; align-items: center; margin-bottom: 6px;",
@@ -39,7 +38,7 @@ legenda_lulc <- function() {
 
 # UI
 ui <- fluidPage(
-  titlePanel("Observatório das Nascentes - APA de Campinas"),
+  titlePanel("Observatório do Uso e Cobertura da Terra em Ecossistemas de Nascentes - APA de Campinas"),
   
   tabsetPanel(
     tabPanel("Buscar por Nascente",
@@ -51,6 +50,7 @@ ui <- fluidPage(
                  legenda_lulc()
                ),
                mainPanel(
+                 tags$h4("Mudanças de Uso e Cobertura da Terra (2016–2023)"),
                  uiOutput("image_nascente")
                )
              )
@@ -65,6 +65,7 @@ ui <- fluidPage(
                  legenda_lulc()
                ),
                mainPanel(
+                 tags$h4("Mudanças de Uso e Cobertura da Terra (2016–2023)"),
                  uiOutput("image_propriedade")
                )
              )
@@ -86,7 +87,7 @@ server <- function(input, output, session) {
     req(input$prop_id)
     nascentes <- unique(df[df[["id CAR"]] == input$prop_id, "id"][[1]])
     if (length(nascentes) == 0) return("Nenhuma nascente encontrada.")
-    paste("Nascentes na propriedade:", paste(nascentes, collapse = ", "))
+    paste("Nascente(es) na propriedade:", paste(nascentes, collapse = ", "))
   })
   
   output$image_nascente <- renderUI({
@@ -102,7 +103,6 @@ server <- function(input, output, session) {
       uri <- dataURI(file = tmp, mime = "image/jpeg")
       
       tagList(
-        tags$h4(paste("Uso e Cobertura da Terra (2016-2023)", input$nascente_id)),
         tags$img(src = uri, style = "max-width: 100%; height: auto; border: 1px solid #ccc; margin-bottom: 10px;")
       )
     } else {
@@ -127,7 +127,7 @@ server <- function(input, output, session) {
         
         tagList(
           tags$hr(),
-          tags$h5(paste("LULC Nascente", nid)),
+          tags$h5(paste("Nascente", nid)),
           tags$img(src = uri, style = "max-width: 100%; height: auto; border: 1px solid #ccc; margin-bottom: 10px;")
         )
       } else {
