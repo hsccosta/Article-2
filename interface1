@@ -1,0 +1,167 @@
+library(shiny)
+library(readxl)
+library(magick)
+library(tcltk)
+library(base64enc)
+library(rmarkdown)
+library(knitr)
+library(tools)
+
+# Caminho fixo das imagens
+img_folder <- "C:/Users/DELL/Desktop/Artigo 2_TC/Arquivos ArcGis/LULC_GDEs_50m/GDEs_50m_lulc_1m/recortes_por_feicao/series_temporais_de_lulc_tiradas"
+
+# Selecionar Excel com os dados ao iniciar
+excel_file <- tk_choose.files(caption = "Selecione o arquivo Excel com nascentes e propriedades", multi = FALSE)
+if (length(excel_file) == 0 || excel_file == "") stop("Nenhum arquivo selecionado.")
+df <- read_excel(excel_file)
+
+# UI
+ui <- fluidPage(
+  titlePanel("Visualizador de Nascentes e Propriedades - APA Campinas"),
+
+  tabsetPanel(
+    tabPanel("Buscar por Nascente",
+             sidebarLayout(
+               sidebarPanel(
+                 numericInput("nascente_id", "Digite o ID da Nascente (1–1326):", value = NA, min = 1, max = 1326),
+                 textOutput("props_for_nascente")
+               ),
+               mainPanel(
+                 uiOutput("image_nascente")
+               )
+             )
+    ),
+    tabPanel("Buscar por Propriedade",
+             sidebarLayout(
+               sidebarPanel(
+                 numericInput("prop_id", "Digite o ID da Propriedade (1–675):", value = NA, min = 1, max = 675),
+                 textOutput("nascentes_for_prop"),
+                 downloadButton("download_pdf", "Exportar Relatório PDF")
+               ),
+               mainPanel(
+                 uiOutput("image_propriedade")
+               )
+             )
+    )
+  )
+)
+
+# Server
+server <- function(input, output, session) {
+
+  # Nascente -> Propriedades
+  output$props_for_nascente <- renderText({
+    req(input$nascente_id)
+    props <- unique(df[df$id == input$nascente_id, "id CAR"][[1]])
+    if (length(props) == 0) return("Nenhuma propriedade encontrada.")
+    paste("Propriedades associadas à nascente:", paste(props, collapse = ", "))
+  })
+
+  # Propriedade -> Nascentes
+  output$nascentes_for_prop <- renderText({
+    req(input$prop_id)
+    nascentes <- unique(df[df[["id CAR"]] == input$prop_id, "id"][[1]])
+    if (length(nascentes) == 0) return("Nenhuma nascente encontrada.")
+    paste("Nascentes associadas à propriedade:", paste(nascentes, collapse = ", "))
+  })
+
+  # Imagem da nascente
+  output$image_nascente <- renderUI({
+    req(input$nascente_id)
+    nasc_id <- sprintf("%04d", input$nascente_id)
+    file_path <- file.path(img_folder, paste0(nasc_id, ".jpg"))
+
+    if (file.exists(file_path)) {
+      tmp <- tempfile(fileext = ".jpg")
+      image_read(file_path) %>%
+        image_resize("1000x") %>%
+        image_write(tmp, format = "jpg")
+      uri <- dataURI(file = tmp, mime = "image/jpeg")
+
+      tagList(
+        tags$h4(paste("Imagem da Nascente", input$nascente_id)),
+        tags$img(src = uri, style = "max-width: 100%; height: auto; border: 1px solid #ccc; margin-bottom: 10px;")
+      )
+    } else {
+      tags$p("Imagem não encontrada.")
+    }
+  })
+
+  # Imagens da propriedade
+  output$image_propriedade <- renderUI({
+    req(input$prop_id)
+    nasc_ids <- unique(df[df[["id CAR"]] == input$prop_id, "id"][[1]])
+    if (length(nasc_ids) == 0) return(tags$p("Nenhuma nascente encontrada."))
+
+    imgs <- lapply(nasc_ids, function(nid) {
+      nasc_file <- sprintf("%04d", nid)
+      file_path <- file.path(img_folder, paste0(nasc_file, ".jpg"))
+      if (file.exists(file_path)) {
+        tmp <- tempfile(fileext = ".jpg")
+        image_read(file_path) %>%
+          image_resize("1000x") %>%
+          image_write(tmp, format = "jpg")
+        uri <- dataURI(file = tmp, mime = "image/jpeg")
+
+        tagList(
+          tags$hr(),
+          tags$h5(paste("Nascente", nid)),
+          tags$img(src = uri, style = "max-width: 100%; height: auto; border: 1px solid #ccc; margin-bottom: 10px;")
+        )
+      } else {
+        tags$p(paste("Imagem não encontrada para nascente", nid))
+      }
+    })
+
+    do.call(tagList, imgs)
+  })
+
+  # PDF
+  output$download_pdf <- downloadHandler(
+    filename = function() {
+      paste0("Relatorio_Propriedade_", input$prop_id, ".pdf")
+    },
+    content = function(file) {
+      req(input$prop_id)
+
+      temp_rmd <- tempfile(fileext = ".Rmd")
+      temp_img_dir <- tempfile()
+      dir.create(temp_img_dir)
+
+      nasc_ids <- unique(df[df[["id CAR"]] == input$prop_id, "id"][[1]])
+
+      rmd_text <- c(
+        "---",
+        "title: \"Relatório de Nascentes por Propriedade\"",
+        "output: pdf_document",
+        "---",
+        "",
+        paste0("**Propriedade:** ", input$prop_id),
+        "",
+        paste0("**Nascentes associadas:** ", paste(nasc_ids, collapse = ", ")),
+        ""
+      )
+
+      for (nid in nasc_ids) {
+        nasc_file <- sprintf("%04d", nid)
+        file_path <- file.path(img_folder, paste0(nasc_file, ".jpg"))
+        if (file.exists(file_path)) {
+          img_path <- file.path(temp_img_dir, paste0(nasc_file, ".jpg"))
+          image_read(file_path) %>%
+            image_resize("1000x") %>%
+            image_write(img_path, format = "jpg")
+          rmd_text <- c(rmd_text,
+                        paste0("### Nascente ", nid),
+                        paste0("![](", img_path, ")"),
+                        "")
+        }
+      }
+
+      writeLines(rmd_text, con = temp_rmd)
+      rmarkdown::render(temp_rmd, output_file = file, quiet = TRUE)
+    }
+  )
+}
+
+# Rodar app
+shinyApp(ui, server)
