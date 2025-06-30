@@ -1,18 +1,53 @@
+# --- Carregar bibliotecas necessárias ---
 library(shiny)
 library(readxl)
 library(magick)
-library(tcltk)
 library(base64enc)
+library(raster)
+library(sf)
+library(leaflet)
 
-# Caminho fixo da pasta com imagens
+# --- Caminhos personalizados (adapte apenas se mover os arquivos) ---
+raster_2023_path <- "C:/Users/DELL/Desktop/Artigo 2_TC/Arquivos ArcGis/LULC_GDEs_50m/GDEs_50m_lulc_1m/2023.tif"
+shp_apa_path <- "C:/Users/DELL/Desktop/Artigo 2_TC/Arquivos ArcGis/apa_de_campinas.shp"
+logos_file <- "C:/Users/DELL/Desktop/Artigo 2_TC/Arquivos ArcGis/logos_combinados.jpg"
 img_folder <- "C:/Users/DELL/Desktop/Artigo 2_TC/Arquivos ArcGis/LULC_GDEs_50m/GDEs_50m_lulc_1m/recortes_por_feicao/series_temporais_de_lulc_tiradas"
+shp_recortes <- "C:/Users/DELL/Desktop/Artigo 2_TC/Arquivos ArcGis/LULC_GDEs_50m/GDEs_50m_lulc_1m/recortes_por_feicao"
 
-# Selecionar Excel com os dados
-excel_file <- tk_choose.files(caption = "Selecione o arquivo Excel com nascentes e propriedades", multi = FALSE)
-if (length(excel_file) == 0 || excel_file == "") stop("Nenhum arquivo selecionado.")
-df <- read_excel(excel_file)
+# --- Verificações básicas ---
+stopifnot(file.exists(raster_2023_path),
+          file.exists(shp_apa_path),
+          file.exists(logos_file),
+          dir.exists(img_folder),
+          dir.exists(shp_recortes))
 
-# Função da legenda
+# --- Leitura dos dados base ---
+raster_2023 <- raster(raster_2023_path)
+shp_apa <- st_read(shp_apa_path, quiet = TRUE)
+
+# --- Seleção do Excel ---
+excel_file <- tk_choose.files(caption = "Selecione o Excel de nascentes", multi = FALSE)
+if (length(excel_file) == 0 || excel_file == "") stop("Nenhum arquivo Excel selecionado.")
+
+df <- tryCatch({
+  read_excel(excel_file)
+}, error = function(e) {
+  stop("Erro ao ler o Excel: ", e$message)
+})
+
+# --- Diagnóstico e renomeação segura das colunas ---
+colnames_lower <- tolower(trimws(names(df)))
+id_col <- which(colnames_lower == "id")
+idcar_col <- which(colnames_lower %in% c("id car", "idcar", "id_car"))
+
+if (length(id_col) != 1 || length(idcar_col) != 1) {
+  stop("Colunas 'id' e 'id CAR' não encontradas corretamente no Excel.")
+}
+
+names(df)[id_col] <- "id"
+names(df)[idcar_col] <- "id CAR"
+
+# --- Função: Legenda (opcional) ---
 legenda_lulc <- function() {
   classes <- data.frame(
     nome = c("Formação Florestal", "Floresta Plantada", "Pastagem",
@@ -23,12 +58,12 @@ legenda_lulc <- function() {
   )
   
   tags$div(
-    tags$h5("Classes de Uso e Cobertura da Terra"),
+    tags$h5("Legenda das Classes"),
     tags$div(style = "display: flex; flex-direction: column;",
              lapply(1:nrow(classes), function(i) {
-               tags$div(style = "display: flex; align-items: center; margin-bottom: 6px;",
+               tags$div(style = "display: flex; align-items: center; margin-bottom: 4px;",
                         tags$div(style = paste0("width: 20px; height: 20px; background-color:", classes$cor[i],
-                                                "; margin-right: 6px; border: 1px solid #000;")),
+                                                "; margin-right: 5px; border: 1px solid #000;")),
                         tags$span(classes$nome[i])
                )
              })
@@ -36,108 +71,109 @@ legenda_lulc <- function() {
   )
 }
 
-# UI
+# --- UI ---
 ui <- fluidPage(
-  titlePanel("Observatório do Uso e Cobertura da Terra em Ecossistemas de Nascentes - APA de Campinas"),
-  
+  tags$head(tags$style("body { font-family: sans-serif; }")),
+  tags$img(src = dataURI(file = logos_file, mime = "image/jpeg"), style = "width: 450px;"),
+  tags$h2("Observatório do Uso e Cobertura da Terra - APA Campinas"),
   tabsetPanel(
     tabPanel("Buscar por Nascente",
              sidebarLayout(
                sidebarPanel(
-                 numericInput("nascente_id", "Digite o ID da Nascente (1–1326):", value = NA, min = 1, max = 1326),
+                 numericInput("nascente_id", "ID da Nascente:", value = 1, min = 1, max = 1326),
                  textOutput("props_for_nascente"),
-                 tags$hr(),
-                 legenda_lulc()
+                 tags$hr(), legenda_lulc()
                ),
-               mainPanel(
-                 tags$h4("Mudanças de Uso e Cobertura da Terra (2016–2023)"),
-                 uiOutput("image_nascente")
-               )
+               mainPanel(uiOutput("image_nascente"))
              )
     ),
     
     tabPanel("Buscar por Propriedade",
              sidebarLayout(
                sidebarPanel(
-                 numericInput("prop_id", "Digite o ID da Propriedade (1–675):", value = NA, min = 1, max = 675),
+                 numericInput("prop_id", "ID da Propriedade (CAR):", value = 1, min = 1, max = 675),
                  textOutput("nascentes_for_prop"),
-                 tags$hr(),
-                 legenda_lulc()
+                 tags$hr(), legenda_lulc()
                ),
-               mainPanel(
-                 tags$h4("Mudanças de Uso e Cobertura da Terra (2016–2023)"),
-                 uiOutput("image_propriedade")
-               )
+               mainPanel(uiOutput("image_propriedade"))
              )
-    )
+    ),
+    
+    tabPanel("Mapa",
+             leafletOutput("mapa_apa", height = 600))
   )
 )
 
-# Server
+# --- Server ---
 server <- function(input, output, session) {
   
+  # Texto: propriedade de uma nascente
   output$props_for_nascente <- renderText({
     req(input$nascente_id)
-    props <- unique(df[df$id == input$nascente_id, "id CAR"][[1]])
+    props <- df[df$id == input$nascente_id, "id CAR", drop = TRUE]
     if (length(props) == 0) return("Nenhuma propriedade encontrada.")
-    paste("Propriedade(es) da nascente:", paste(props, collapse = ", "))
+    paste("Propriedade(s):", paste(unique(props), collapse = ", "))
   })
   
+  # Texto: nascentes de uma propriedade
   output$nascentes_for_prop <- renderText({
     req(input$prop_id)
-    nascentes <- unique(df[df[["id CAR"]] == input$prop_id, "id"][[1]])
+    nascentes <- df[df[["id CAR"]] == input$prop_id, "id", drop = TRUE]
     if (length(nascentes) == 0) return("Nenhuma nascente encontrada.")
-    paste("Nascente(es) na propriedade:", paste(nascentes, collapse = ", "))
+    paste("Nascentes:", paste(unique(nascentes), collapse = ", "))
   })
+  
+  # Função para mostrar imagem
+  renderImageHelper <- function(nasc_id_val) {
+    nasc_id_formatted <- sprintf("%04d", nasc_id_val)
+    possíveis_extensões <- c(".jpg", ".jpeg", ".png", ".JPG", ".JPEG", ".PNG")
+    
+    file_path <- NULL
+    for (ext in possíveis_extensões) {
+      candidate <- file.path(img_folder, paste0(nasc_id_formatted, ext))
+      if (file.exists(candidate)) {
+        file_path <- candidate
+        break
+      }
+    }
+    
+    if (is.null(file_path)) {
+      return(tags$p(paste("Imagem não encontrada para a nascente", nasc_id_val)))
+    }
+    
+    tmp <- tempfile(fileext = ".jpg")
+    tryCatch({
+      image_read(file_path) %>%
+        image_scale("700x") %>%
+        image_write(tmp)
+      uri <- dataURI(file = tmp, mime = "image/jpeg")
+      tags$img(src = uri, style = "max-width: 100%; height: auto;")
+    }, error = function(e) {
+      tags$p(paste("Erro ao processar imagem:", e$message))
+    })
+  }
   
   output$image_nascente <- renderUI({
     req(input$nascente_id)
-    nasc_id <- sprintf("%04d", input$nascente_id)
-    file_path <- file.path(img_folder, paste0(nasc_id, ".jpg"))
-    
-    if (file.exists(file_path)) {
-      tmp <- tempfile(fileext = ".jpg")
-      image_read(file_path) %>%
-        image_scale("700x") %>%
-        image_write(tmp, format = "jpg")
-      uri <- dataURI(file = tmp, mime = "image/jpeg")
-      
-      tagList(
-        tags$img(src = uri, style = "max-width: 100%; height: auto; border: 1px solid #ccc; margin-bottom: 10px;")
-      )
-    } else {
-      tags$p("Imagem não encontrada.")
-    }
+    renderImageHelper(input$nascente_id)
   })
   
   output$image_propriedade <- renderUI({
     req(input$prop_id)
-    nasc_ids <- unique(df[df[["id CAR"]] == input$prop_id, "id"][[1]])
+    nasc_ids <- df[df[["id CAR"]] == input$prop_id, "id", drop = TRUE]
     if (length(nasc_ids) == 0) return(tags$p("Nenhuma nascente encontrada."))
     
-    imgs <- lapply(nasc_ids, function(nid) {
-      nasc_id <- sprintf("%04d", nid)
-      file_path <- file.path(img_folder, paste0(nasc_id, ".jpg"))
-      if (file.exists(file_path)) {
-        tmp <- tempfile(fileext = ".jpg")
-        image_read(file_path) %>%
-          image_scale("700x") %>%
-          image_write(tmp, format = "jpg")
-        uri <- dataURI(file = tmp, mime = "image/jpeg")
-        
-        tagList(
-          tags$hr(),
-          tags$h5(paste("Nascente", nid)),
-          tags$img(src = uri, style = "max-width: 100%; height: auto; border: 1px solid #ccc; margin-bottom: 10px;")
-        )
-      } else {
-        tags$p(paste("Imagem não encontrada para nascente", nid))
-      }
-    })
-    
-    do.call(tagList, imgs)
+    do.call(tagList, lapply(unique(nasc_ids), function(nid) {
+      tagList(tags$hr(), tags$h5(paste("Nascente", nid)), renderImageHelper(nid))
+    }))
+  })
+  
+  output$mapa_apa <- renderLeaflet({
+    leaflet() %>%
+      addProviderTiles("CartoDB.Positron") %>%
+      addPolygons(data = shp_apa, weight = 1, fillOpacity = 0.2)
   })
 }
 
-# Rodar o app
+# --- Rodar app ---
 shinyApp(ui, server)
