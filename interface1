@@ -25,7 +25,7 @@ stopifnot(file.exists(raster_2023_path),
 raster_2023 <- raster(raster_2023_path)
 shp_apa <- st_read(shp_apa_path, quiet = TRUE)
 
-# --- Seleção do Excel ---
+# --- Seleção do Excel de nascentes ---
 excel_file <- tk_choose.files(caption = "Selecione o Excel de nascentes", multi = FALSE)
 if (length(excel_file) == 0 || excel_file == "") stop("Nenhum arquivo Excel selecionado.")
 
@@ -47,7 +47,18 @@ if (length(id_col) != 1 || length(idcar_col) != 1) {
 names(df)[id_col] <- "id"
 names(df)[idcar_col] <- "id CAR"
 
-# --- Função: Legenda (opcional) ---
+# --- Carregar tabela de classes por feição ---
+classe_excel <- tk_choose.files(caption = "Selecione a Tabela de Classes por Feição", multi = FALSE)
+if (length(classe_excel) == 0 || classe_excel == "") stop("Nenhuma tabela de classe selecionada.")
+
+df_classes <- tryCatch({
+  read_excel(classe_excel)
+}, error = function(e) {
+  stop("Erro ao ler a tabela de classes: ", e$message)
+})
+df_classes <- as.data.frame(df_classes)
+
+# --- Função: Legenda ---
 legenda_lulc <- function() {
   classes <- data.frame(
     nome = c("Formação Florestal", "Floresta Plantada", "Pastagem",
@@ -99,6 +110,23 @@ ui <- fluidPage(
              )
     ),
     
+    tabPanel("Classe Predominante",
+             sidebarLayout(
+               sidebarPanel(
+                 selectInput("classe_escolhida", "Escolha uma classe de uso e cobertura da terra:",
+                             choices = c("Formação Florestal", "Floresta Plantada", "Pastagem",
+                                         "Mosaico de Usos", "Cultura Temporária", "Rios e Lagos",
+                                         "Área Urbanizada", "Campo Alagado e Área Pantanosa", "Não Observado"),
+                             selected = "Formação Florestal"),
+                 tags$hr(), legenda_lulc()
+               ),
+               mainPanel(
+                 tags$h4("Feições com essa classe como predominante:"),
+                 dataTableOutput("feicoes_predominantes")
+               )
+             )
+    ),
+    
     tabPanel("Mapa",
              leafletOutput("mapa_apa", height = 600))
   )
@@ -107,7 +135,6 @@ ui <- fluidPage(
 # --- Server ---
 server <- function(input, output, session) {
   
-  # Texto: propriedade de uma nascente
   output$props_for_nascente <- renderText({
     req(input$nascente_id)
     props <- df[df$id == input$nascente_id, "id CAR", drop = TRUE]
@@ -115,7 +142,6 @@ server <- function(input, output, session) {
     paste("Propriedade(s):", paste(unique(props), collapse = ", "))
   })
   
-  # Texto: nascentes de uma propriedade
   output$nascentes_for_prop <- renderText({
     req(input$prop_id)
     nascentes <- df[df[["id CAR"]] == input$prop_id, "id", drop = TRUE]
@@ -123,7 +149,6 @@ server <- function(input, output, session) {
     paste("Nascentes:", paste(unique(nascentes), collapse = ", "))
   })
   
-  # Função para mostrar imagem
   renderImageHelper <- function(nasc_id_val) {
     nasc_id_formatted <- sprintf("%04d", nasc_id_val)
     possíveis_extensões <- c(".jpg", ".jpeg", ".png", ".JPG", ".JPEG", ".PNG")
@@ -172,6 +197,22 @@ server <- function(input, output, session) {
     leaflet() %>%
       addProviderTiles("CartoDB.Positron") %>%
       addPolygons(data = shp_apa, weight = 1, fillOpacity = 0.2)
+  })
+  
+  output$feicoes_predominantes <- renderDataTable({
+    req(input$classe_escolhida)
+    
+    if (!"Classe_Predominante" %in% names(df_classes)) {
+      return(data.frame(Mensagem = "Coluna 'Classe_Predominante' não encontrada na tabela."))
+    }
+    
+    resultado <- df_classes[df_classes$Classe_Predominante == input$classe_escolhida, ]
+    
+    if (nrow(resultado) == 0) {
+      return(data.frame(Mensagem = "Nenhuma feição encontrada com essa classe como predominante."))
+    }
+    
+    resultado
   })
 }
 
