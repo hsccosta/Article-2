@@ -39,7 +39,7 @@ legenda_lulc <- function() {
     tags$h4(class = "titulo-legenda", HTML("<strong>Classes de Uso e Cobertura da Terra</strong>")),
     tags$div(style = "display: flex; flex-direction: column;",
              lapply(1:nrow(classes), function(i) {
-               tags$div(style = "display: flex; align-items: center; margin-bottom: 4px;",
+               tags$div(style = paste0("display: flex; align-items: center; margin-bottom: 4px;"),
                         tags$div(style = paste0("width: 20px; height: 20px; background-color:", classes$cor[i],
                                                 "; margin-right: 5px; border: 1px solid #000;")),
                         tags$span(classes$nome[i], class = "classe-legenda")
@@ -59,7 +59,7 @@ ui <- fluidPage(
         font-family: 'Times New Roman', serif !important;
       }
       .titulo-principal {
-        font-size: 168% !important; /* 177% * 0.95 = 168.15% -> arredondado para 168% */
+        font-size: 168% !important;
       }
       .titulo-legenda {
         font-size: 98% !important;
@@ -133,6 +133,23 @@ ui <- fluidPage(
                )
              )
     ),
+    
+    # ✅ AQUI FOI ALTERADO O NOME DA ABA
+    tabPanel("Transições 2022-2023",
+             sidebarLayout(
+               sidebarPanel(
+                 numericInput("id_nascente_viz", "ID da Nascente (1 - 1326):", value = NA, min = 1, max = 1326),
+                 numericInput("id_prop_viz", "ID da Propriedade (CAR) (1 - 675):", value = NA, min = 1, max = 675),
+                 uiOutput("info_cross_viz"),
+                 tags$hr(), legenda_lulc()
+               ),
+               mainPanel(
+                 tags$h4("Feições Correspondentes no Raster (2023.tif):"),
+                 plotOutput("plot_raster_viz")
+               )
+             )
+    ),
+    
     tabPanel("Mapa",
              leafletOutput("mapa_apa", height = 600))
   )
@@ -159,7 +176,7 @@ server <- function(input, output, session) {
     req(input$nascente_id, df())
     props <- df()[df()$id == input$nascente_id, "id CAR", drop = TRUE]
     if (length(props) == 0) return(tags$p("Nenhuma propriedade encontrada."))
-    tags$p(class = "label-prop-nasc", HTML(paste0("<strong>Propriedade(es):</strong><br><span style='color: #5a7ca9;'>",
+    tags$p(class = "label-prop-nasc", HTML(paste0("<strong>Propriedade(s):</strong><br><span style='color: #5a7ca9;'>",
                                                   paste(unique(props), collapse = ", "), "</span>")))
   })
   
@@ -264,6 +281,55 @@ server <- function(input, output, session) {
       addPolygons(data = shp_apa, weight = 1, fillOpacity = 0.1, color = "#888888") %>%
       addPolygons(data = shp_filtrado, fillColor = "#3182bd", fillOpacity = 0.6,
                   color = "#225577", weight = 2, label = ~as.character(id))
+  })
+  
+  # --- Transições 2022-2023 ---
+  mapbiomas_colors <- c(
+    "3" = "#1f8d49", "4" = "#7dc975", "5" = "#04381d", "6" = "#026975",
+    "9" = "#7a5900", "11" = "#519799", "12" = "#d6bc74", "13" = "#d89f5c",
+    "15" = "#edde8e", "20" = "#db7093", "21" = "#C27BA0", "23" = "#ffefc3",
+    "24" = "#f5b8c0", "25" = "#d4271e", "33" = "#2532e4", "39" = "#ffffff"
+  )
+  
+  output$info_cross_viz <- renderUI({
+    req(df())
+    id_n <- input$id_nascente_viz
+    id_p <- input$id_prop_viz
+    d <- df()
+    if (!is.na(id_n)) {
+      props <- d[d$id == id_n, "id CAR", drop = TRUE]
+      return(tags$p(HTML(paste0("<strong>Propriedade(s):</strong> ", paste(unique(props), collapse = ", ")))))
+    } else if (!is.na(id_p)) {
+      nascentes <- d[d[["id CAR"]] == id_p, "id", drop = TRUE]
+      return(tags$p(HTML(paste0("<strong>Nascente(s):</strong> ", paste(unique(nascentes), collapse = ", ")))))
+    }
+    return(NULL)
+  })
+  
+  output$plot_raster_viz <- renderPlot({
+    req(df())
+    id_n <- input$id_nascente_viz
+    id_p <- input$id_prop_viz
+    nasc_ids <- c()
+    if (!is.na(id_n)) {
+      nasc_ids <- id_n
+    } else if (!is.na(id_p)) {
+      nasc_ids <- unique(df()[df()[["id CAR"]] == id_p, "id", drop = TRUE])
+    }
+    if (length(nasc_ids) == 0) return(NULL)
+    
+    par(mfrow = c(1, length(nasc_ids)), mar = c(2, 2, 2, 2))
+    for (nid in nasc_ids) {
+      mask_raster <- raster_2023
+      mask_raster[mask_raster[] != nid] <- NA
+      if (all(is.na(mask_raster[]))) {
+        plot.new()
+        title(main = paste("Nascente", nid, "- Sem Dados"))
+        next
+      }
+      plot(mask_raster, col = mapbiomas_colors, breaks = as.numeric(names(mapbiomas_colors)),
+           main = paste("Nascente", nid), legend = FALSE)
+    }
   })
 }
 
