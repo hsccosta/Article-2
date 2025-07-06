@@ -1,77 +1,117 @@
-library(sf)
 library(terra)
-library(dplyr)
-library(foreach)
-library(doParallel)
+library(sf)
+library(parallel)
+library(pbapply)
+library(utils)
 
-# Caminhos
-dir_dados <- "C:/Users/DELL/Desktop/Artigo 2_TC/Arquivos ArcGis/LULC_GDEs_50m/GDEs_50m_lulc_1m"
-shapefile <- file.path(dir_dados, "feicoes.shp")
-saida_dir <- file.path(dir_dados, "recortes_por_feicao")
-dir.create(saida_dir, showWarnings = FALSE)
+# ======= ENTRADAS =======
+cat("Selecione os 8 arquivos TIF na ordem dos anos 2016 a 2023:\n")
+tif_files <- choose.files()
 
-# Anos e arquivos raster
-anos <- 2016:2023
-rasters <- setNames(
-  file.path(dir_dados, paste0(anos, ".tif")),
-  anos
-)
-
-# Carregar feições com atributos
-feicoes <- st_read(shapefile)
-if (!"fid" %in% names(feicoes)) stop("⚠️ A coluna 'fid' não existe no shapefile.")
-
-# Inicializar paralelização
-num_cores <- max(1, parallel::detectCores() - 1)
-cl <- makeCluster(num_cores)
-registerDoParallel(cl)
-
-# Loop paralelizado por feição
-foreach(i = 1:nrow(feicoes), .packages = c("terra", "sf")) %dopar% {
-  tryCatch({
-    feicao <- feicoes[i, ]
-    id <- as.character(feicao$fid)
-    feicao_vect <- terra::vect(feicao)
-    
-    # Criar pasta por feição
-    pasta_feicao <- file.path(saida_dir, paste0("feicao_", id))
-    dir.create(pasta_feicao, showWarnings = FALSE, recursive = TRUE)
-    
-    for (ano in anos) {
-      raster_path <- rasters[as.character(ano)]
-      
-      if (!file.exists(raster_path)) {
-        cat("⚠️ Raster não encontrado:", raster_path, "\n")
-        next
-      }
-      
-      raster_base <- try(terra::rast(raster_path), silent = TRUE)
-      if (inherits(raster_base, "try-error")) {
-        cat("❌ Erro ao ler raster:", raster_path, "\n")
-        next
-      }
-      
-      # Reprojetar feição
-      feicao_proj <- terra::project(feicao_vect, terra::crs(raster_base))
-      
-      # Recorte e máscara
-      recorte <- terra::mask(terra::crop(raster_base, feicao_proj), feicao_proj)
-      
-      # Caminho de saída
-      nome_saida <- file.path(pasta_feicao, paste0(ano, ".tif"))
-      
-      # Exportar
-      terra::writeRaster(recorte, nome_saida, overwrite = TRUE)
-    }
-    
-    cat("✅ Feição fid", id, "exportada com sucesso.\n")
-  },
-  error = function(e) {
-    cat("❌ Erro na feição", i, "-", conditionMessage(e), "\n")
-  })
+if (length(tif_files) != 8) {
+  stop("Você deve selecionar exatamente 8 arquivos TIF na ordem de 2016 a 2023.")
 }
 
-# Finalizar cluster
-stopCluster(cl)
+anos <- 2016:2023
 
-cat("🎉 Exportação concluída. Arquivos estão em:\n", saida_dir, "\n")
+cat("Selecione o arquivo de feições (shapefile ou geopackage):\n")
+feicoes_file <- file.choose()
+feicoes_sf <- st_read(feicoes_file, quiet = TRUE)
+feicoes_vect <- vect(feicoes_sf)
+
+cat("Selecione o diretório onde deseja salvar a pasta IMAGENS:\n")
+output_base <- choose.dir()
+if (is.na(output_base) || output_base == "") {
+  stop("Nenhum diretório selecionado.")
+}
+
+output_dir <- file.path(output_base, "IMAGENS")
+if (!dir.exists(output_dir)) {
+  dir.create(output_dir, recursive = TRUE)
+  cat("Pasta IMAGENS criada em:", output_dir, "\n")
+} else {
+  cat("Pasta IMAGENS já existe em:", output_dir, "\n")
+}
+
+# ======= PREPARAR TAREFAS =======
+n_feicoes <- nrow(feicoes_sf)
+tarefas <- list()
+contador <- 1
+
+for (i in seq_along(tif_files)) {
+  for (j in 1:n_feicoes) {
+    tarefas[[length(tarefas) + 1]] <- list(ano_idx = i, feicao_idx = j, contador = contador)
+    contador <- contador + 1
+  }
+}
+
+# ======= FUNÇÃO DE PROCESSAMENTO =======
+processar_feicao <- function(info, tif_files, feicoes_vect, output_dir) {
+  ano_idx <- info$ano_idx
+  feicao_idx <- info$feicao_idx
+  contador <- info$contador
+  
+  ano_raster <- rast(tif_files[ano_idx])
+  feicao <- feicoes_vect[feicao_idx]
+  
+  # Verifica interseção
+  if (!relate(ano_raster, feicao, "intersects")) {
+    return(data.frame(arquivo = NA, contador = contador, ano = 2015 + ano_idx, id_feicao = feicao_idx, status = "Sem interseção"))
+  }
+  
+  recorte <- crop(ano_raster, feicao)
+  recorte <- mask(recorte, feicao)
+  
+  # Garantir pasta existente
+  if (!dir.exists(output_dir)) {
+    dir.create(output_dir, recursive = TRUE)
+  }
+  
+  nome_arquivo <- file.path(output_dir, sprintf("%05d.tif", contador))
+  writeRaster(recorte, nome_arquivo, overwrite = TRUE)
+  
+  return(data.frame(arquivo = nome_arquivo, contador = contador, ano = 2015 + ano_idx, id_feicao = feicao_idx, status = "Salvo"))
+}
+
+# ======= ESCOLHA DO MODO =======
+cat("Deseja usar processamento paralelo? (s/n): ")
+usar_paralelo <- tolower(readline())
+
+log_list <- list()
+
+# ======= EXECUÇÃO =======
+if (usar_paralelo == "s") {
+  n_cores <- max(1, detectCores() - 1)
+  cat(sprintf("Usando %d núcleos para processamento paralelo.\n", n_cores))
+  
+  cl <- makeCluster(n_cores)
+  clusterExport(cl, c("tif_files", "feicoes_vect", "output_dir", "processar_feicao"))
+  clusterEvalQ(cl, library(terra))
+  
+  pboptions(type = "timer")
+  log_list <- pblapply(tarefas, function(x) processar_feicao(x, tif_files, feicoes_vect, output_dir), cl = cl)
+  
+  stopCluster(cl)
+} else {
+  cat("Executando de forma sequencial...\n")
+  pboptions(type = "timer")
+  log_list <- pblapply(tarefas, function(x) processar_feicao(x, tif_files, feicoes_vect, output_dir))
+}
+
+# ======= SALVAR LOG =======
+log_df <- do.call(rbind, log_list)
+log_file <- file.path(output_dir, "log_recortes.csv")
+write.csv(log_df, log_file, row.names = FALSE)
+cat("Log salvo em:", log_file, "\n")
+
+# ======= COMPACTAÇÃO OPCIONAL =======
+cat("Deseja compactar a pasta IMAGENS em um arquivo ZIP? (s/n): ")
+compactar <- tolower(readline())
+
+if (compactar == "s") {
+  zip_file <- file.path(output_base, "IMAGENS.zip")
+  zip(zipfile = zip_file, files = list.files(output_dir, full.names = TRUE))
+  cat("Pasta IMAGENS compactada em:", zip_file, "\n")
+}
+
+cat("Processamento concluído! Total de arquivos salvos: ", sum(log_df$status == "Salvo", na.rm = TRUE), "\n")
