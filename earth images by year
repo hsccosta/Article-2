@@ -1,0 +1,68 @@
+// ======= CONFIGURAÇÕES =======
+var colecaoFeicoes = ee.FeatureCollection('projects/ee-henriquesccosta/assets/MAPBIOMAS/GDEs_50m');
+var ano = 2016;
+var raio = 50;  // Raio em metros
+
+// ======= MELHOR IMAGEM DO ANO =======
+function melhorImagemOuMosaico(ano, area) {
+  var inicio = ee.Date.fromYMD(ano, 1, 1);
+  var fim = inicio.advance(1, 'year');
+
+  var colecao = ee.ImageCollection('COPERNICUS/S2_SR')
+    .filterDate(inicio, fim)
+    .filterBounds(area)
+    .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 60))
+    .select(['B4', 'B3', 'B2']);
+
+  var primeira = colecao.first();
+  return ee.Image(ee.Algorithms.If(primeira, primeira, colecao.median()));
+}
+
+// ======= IMAGEM BASE =======
+var imagemBase = melhorImagemOuMosaico(ano, colecaoFeicoes);
+
+// ======= BUFFER CIRCULAR DE 50m =======
+var bufferFeicoes = colecaoFeicoes.map(function(f) {
+  return ee.Feature(f.geometry().centroid().buffer(raio));
+});
+var geometriaBuffer = bufferFeicoes.union().geometry();
+
+// ======= VISUALIZAÇÃO RGB DIRETO =======
+var visualRgb = imagemBase.visualize({
+  bands: ['B4', 'B3', 'B2'],
+  min: 0,
+  max: 3000
+}).clip(geometriaBuffer);  // clip no visualize, sem updateMask!
+
+// ======= CONTORNOS PRETOS =======
+var bordas = ee.Image().paint({
+  featureCollection: bufferFeicoes,
+  color: 0,
+  width: 1
+}).visualize({
+  palette: ['000000'],
+  opacity: 1
+});
+
+// ======= COMPOSIÇÃO FINAL =======
+var imagemFinal = visualRgb.blend(bordas);
+
+// ======= REGIÃO DE EXPORTAÇÃO =======
+var regiaoExport = geometriaBuffer.bounds();
+
+// ======= EXPORTAÇÃO =======
+Export.image.toDrive({
+  image: imagemFinal,
+  description: 'GDEs_2016_visual_contornos',
+  folder: 'GEE_Imagens',
+  fileNamePrefix: 'GDEs_2016_visual_contornos',
+  region: regiaoExport,
+  scale: 10,
+  maxPixels: 1e13
+});
+
+// ======= DEBUG =======
+print('Nº de feições:', colecaoFeicoes.size());
+print('Área total (ha):', colecaoFeicoes.geometry().area().divide(1e4));
+Map.centerObject(colecaoFeicoes, 12);
+Map.addLayer(imagemFinal, {}, 'RGB + Contornos');
