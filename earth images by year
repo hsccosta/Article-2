@@ -1,68 +1,54 @@
-// ======= CONFIGURAÇÕES =======
-var colecaoFeicoes = ee.FeatureCollection('projects/ee-henriquesccosta/assets/MAPBIOMAS/GDEs_50m');
-var ano = 2016;
-var raio = 50;  // Raio em metros
+// --- CONFIGURAÇÕES ---
+var region = ee.FeatureCollection('projects/ee-henriquesccosta/assets/MAPBIOMAS/apa_campinas');
 
-// ======= MELHOR IMAGEM DO ANO =======
-function melhorImagemOuMosaico(ano, area) {
-  var inicio = ee.Date.fromYMD(ano, 1, 1);
-  var fim = inicio.advance(1, 'year');
+var startYear = 2016;
+var endYear = new Date().getFullYear();
 
-  var colecao = ee.ImageCollection('COPERNICUS/S2_SR')
-    .filterDate(inicio, fim)
-    .filterBounds(area)
-    .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 60))
-    .select(['B4', 'B3', 'B2']);
-
-  var primeira = colecao.first();
-  return ee.Image(ee.Algorithms.If(primeira, primeira, colecao.median()));
+// --- FUNÇÃO DE MÁSCARA ---
+function maskS2sr(image) {
+  var scl = image.select('SCL');
+  
+  // Máscara: remover sombra (3), vegetação densa (4 pode deixar se quiser), nuvem média (8), alta (9), cirrus (10), neve (11)
+  var mask = scl.neq(3)
+                .and(scl.neq(8))
+                .and(scl.neq(9))
+                .and(scl.neq(10))
+                .and(scl.neq(11));
+                
+  return image.updateMask(mask);
 }
 
-// ======= IMAGEM BASE =======
-var imagemBase = melhorImagemOuMosaico(ano, colecaoFeicoes);
+// --- LOOP POR ANO ---
+for (var y = startYear; y <= endYear; y++) {
+  var startDate = ee.Date.fromYMD(y, 1, 1);
+  var endDate = ee.Date.fromYMD(y, 12, 31);
+  
+  var collection = ee.ImageCollection('COPERNICUS/S2_SR')
+    .filterBounds(region)
+    .filterDate(startDate, endDate)
+    .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 50)) // permitimos até 50% porque vamos mascarar na mão
+    .map(maskS2sr)
+    .select(['B2', 'B3', 'B4', 'B8']); // azul, verde, vermelho, NIR
+    
+  // Composição mediana (pode trocar para mean ou mosaic se quiser)
+  var composite = collection.median();
+  
+  // Visualização no mapa
+  Map.addLayer(composite.clip(region), 
+    {bands: ['B4', 'B3', 'B2'], min: 0, max: 3000}, 
+    'Sentinel2_SR_' + y);
+  
+  // Exportação
+  Export.image.toDrive({
+    image: composite.clip(region),
+    description: 'Sentinel2_SR_' + y,
+    folder: 'Sentinel_Exports',
+    fileNamePrefix: 'Sentinel2_SR_' + y,
+    region: region.geometry(),
+    scale: 10,
+    maxPixels: 1e13
+  });
+}
 
-// ======= BUFFER CIRCULAR DE 50m =======
-var bufferFeicoes = colecaoFeicoes.map(function(f) {
-  return ee.Feature(f.geometry().centroid().buffer(raio));
-});
-var geometriaBuffer = bufferFeicoes.union().geometry();
-
-// ======= VISUALIZAÇÃO RGB DIRETO =======
-var visualRgb = imagemBase.visualize({
-  bands: ['B4', 'B3', 'B2'],
-  min: 0,
-  max: 3000
-}).clip(geometriaBuffer);  // clip no visualize, sem updateMask!
-
-// ======= CONTORNOS PRETOS =======
-var bordas = ee.Image().paint({
-  featureCollection: bufferFeicoes,
-  color: 0,
-  width: 1
-}).visualize({
-  palette: ['000000'],
-  opacity: 1
-});
-
-// ======= COMPOSIÇÃO FINAL =======
-var imagemFinal = visualRgb.blend(bordas);
-
-// ======= REGIÃO DE EXPORTAÇÃO =======
-var regiaoExport = geometriaBuffer.bounds();
-
-// ======= EXPORTAÇÃO =======
-Export.image.toDrive({
-  image: imagemFinal,
-  description: 'GDEs_2016_visual_contornos',
-  folder: 'GEE_Imagens',
-  fileNamePrefix: 'GDEs_2016_visual_contornos',
-  region: regiaoExport,
-  scale: 10,
-  maxPixels: 1e13
-});
-
-// ======= DEBUG =======
-print('Nº de feições:', colecaoFeicoes.size());
-print('Área total (ha):', colecaoFeicoes.geometry().area().divide(1e4));
-Map.centerObject(colecaoFeicoes, 12);
-Map.addLayer(imagemFinal, {}, 'RGB + Contornos');
+// Centralizar no mapa
+Map.centerObject(region);
