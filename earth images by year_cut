@@ -1,0 +1,37 @@
+# Pacotes necessários
+library(terra)
+library(sf)
+library(stringr)
+
+# Selecionar os arquivos
+raster_path <- file.choose()        # Escolha o raster .tif
+shapefile_path <- file.choose()     # Escolha o shapefile .shp
+output_dir <- choose.dir()          # Escolha a pasta de saída
+
+# Carregar os dados
+r <- rast(raster_path)
+shapes <- st_read(shapefile_path, quiet = TRUE)
+shapes <- st_transform(shapes, crs(r))  # Garante mesmo sistema de coordenadas
+
+# Loop pelas feições
+n <- nrow(shapes)
+
+for (i in 1:n) {
+  feat <- shapes[i, ]
+  
+  # Recorte do raster pela feição
+  r_crop <- crop(r, vect(feat))
+  r_mask <- mask(r_crop, vect(feat))
+  
+  # Nome com padding (ex: 00001.tif)
+  filename <- sprintf("%05d.tif", i)
+  filepath <- file.path(output_dir, filename)
+  
+  # Salvar raster recortado
+  writeRaster(r_mask, filepath, overwrite = TRUE)
+  
+  # Log no console
+  cat(sprintf("Feição %d/%d salva em: %s\n", i, n, filename))
+}
+
+cat("✅ Processo concluído com sucesso! Arquivos salvos em:\n", output_dir, "\n")
