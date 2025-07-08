@@ -1,0 +1,87 @@
+# Pacotes necessários
+if (!requireNamespace("magick")) install.packages("magick")
+if (!requireNamespace("fs")) install.packages("fs")
+if (!requireNamespace("stringr")) install.packages("stringr")
+library(magick)
+library(fs)
+library(stringr)
+
+# Solicita pasta com imagens
+input_dir <- choose.dir(caption = "Selecione a pasta com as imagens nomeadas de 00001.jpg a 10608.jpg")
+output_dir <- file.path(input_dir, "tiras_lulc")
+dir_create(output_dir)
+
+# Parâmetros
+n_tiras <- 1326
+espaco_mm <- 2
+dpi <- 300
+espaco_px <- round((espaco_mm / 25.4) * dpi)
+
+# Gera tiras
+for (i in 1:n_tiras) {
+  cat(sprintf("🧩 Montando tira %04d de %d\n", i, n_tiras))
+  
+  # Índices das imagens correspondentes aos anos 2016–2023
+  indices_ano <- c(0, 1326, 2652, 3978, 5304, 6630, 7956, 9282) + i
+  nomes_anos <- sprintf("%05d.jpg", indices_ano)
+  
+  imagens <- list()
+  
+  for (nome in nomes_anos) {
+    caminho <- file.path(input_dir, nome)
+    if (file.exists(caminho)) {
+      img <- image_read(caminho)
+      imagens <- append(imagens, list(img))
+    } else {
+      imagens <- append(imagens, list(NULL))
+    }
+  }
+  
+  # Usa a primeira imagem válida como referência de tamanho
+  img_ref <- Filter(Negate(is.null), imagens)[[1]]
+  largura_padrao <- image_info(img_ref)$width
+  altura_padrao <- image_info(img_ref)$height
+  
+  # Imagem branca de 2 mm de largura
+  espaco_branco <- image_blank(width = espaco_px, height = altura_padrao, color = "white")
+  
+  # Substitui imagens ausentes por branco
+  imagens_final <- lapply(imagens, function(img) {
+    if (is.null(img)) image_blank(width = largura_padrao, height = altura_padrao, color = "white") else img
+  })
+  
+  # Adiciona 2 espaços brancos ao final para os anos 2024 e 2025
+  imagens_final <- c(imagens_final, 
+                     list(image_blank(width = largura_padrao, height = altura_padrao, color = "white")),
+                     list(image_blank(width = largura_padrao, height = altura_padrao, color = "white")))
+  
+  # Intercala imagens com espaços
+  sequencia <- list()
+  for (j in 1:(length(imagens_final))) {
+    sequencia <- append(sequencia, list(imagens_final[[j]]))
+    if (j < length(imagens_final)) {
+      sequencia <- append(sequencia, list(espaco_branco))
+    }
+  }
+  
+  # Verifica largura total e redimensiona se ultrapassar limite
+  total_width <- sum(sapply(sequencia, function(img) image_info(img)$width))
+  if (total_width > 60000) {
+    cat("⚠️ Redimensionando por excesso de largura...\n")
+    escala <- 60000 / total_width
+    sequencia <- lapply(sequencia, function(img) image_scale(img, paste0(round(image_info(img)$width * escala), "x")))
+  }
+  
+  # Junta todas horizontalmente
+  tira <- image_append(image_join(sequencia))
+  
+  # Salva
+  nome_arquivo <- sprintf("%04dt.jpg", i)
+  destino <- file.path(output_dir, nome_arquivo)
+  
+  tryCatch({
+    image_write(tira, path = destino, format = "jpg")
+  }, error = function(e) {
+    cat(sprintf("❌ Erro ao salvar: %s\n", destino))
+  })
+}
