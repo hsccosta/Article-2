@@ -11,6 +11,7 @@ library(ggplot2)
 library(plotly)
 library(tidyr)
 library(tools)
+library(xml2)
 
 # --- Caminhos fixos ---
 raster_2023_path <- "C:/Users/DELL/Desktop/Artigo 2_TC/Arquivos ArcGis/LULC_GDEs_50m/GDEs_50m_lulc_1m/2023.tif"
@@ -20,6 +21,7 @@ img_folder <- "C:/Users/DELL/Desktop/Artigo 2_TC/Arquivos ArcGis/LULC_GDEs_50m/I
 shp_recortes <- "C:/Users/DELL/Desktop/Artigo 2_TC/Arquivos ArcGis/LULC_GDEs_50m/Interface_Observatório das Nascentes/lulc_raw/resymb"
 save_path <- "C:/Users/DELL/Desktop/Artigo 2_TC/Arquivos ArcGis/LULC_GDEs_50m/Interface_Observatório das Nascentes/repositório"
 fotos_path <- file.path(save_path, "fotos")
+qml_path <- "C:/Users/DELL/Desktop/Artigo 2_TC/Arquivos ArcGis/brazil_col8.qml"
 
 if (!dir.exists(save_path)) dir.create(save_path, recursive = TRUE)
 if (!dir.exists(fotos_path)) dir.create(fotos_path, recursive = TRUE)
@@ -32,6 +34,55 @@ classe_excel_path <- file.choose()
 raster_2023 <- raster(raster_2023_path)
 shp_apa <- st_read(shp_apa_path, quiet = TRUE)
 
+# --- Extrai e traduz cores do QML ---
+parse_qml_colors <- function(qml_file) {
+  qml <- read_xml(qml_file)
+  nodes <- xml_find_all(qml, ".//paletteEntry")
+  labels <- xml_attr(nodes, "label")
+  colors <- xml_attr(nodes, "color")
+  
+  traduz <- c(
+    "Forest Formation" = "Formação Florestal",
+    "Forest Plantation" = "Floresta Plantada",
+    "Pasture" = "Pastagem",
+    "Mosaic of Agriculture and Pasture" = "Mosaico de Usos",
+    "Wetland" = "Campo Alagado e Pantanoso",
+    "Temporary Crop" = "Cultura Temporária",
+    "Urban Infrastructure" = "Área Urbanizada",
+    "Water" = "Rios e Lagos",
+    "Not Observed" = "Não Observado"
+  )
+  
+  cores_nomeadas <- setNames(colors, labels)
+  cores_filtradas <- cores_nomeadas[names(cores_nomeadas) %in% names(traduz)]
+  nomes_traduzidos <- traduz[names(cores_filtradas)]
+  names(cores_filtradas) <- nomes_traduzidos
+  cores_filtradas
+}
+
+cores_mapbiomas <- parse_qml_colors(qml_path)
+
+# --- Função legenda LULC ---
+legenda_lulc <- function() {
+  classes <- data.frame(
+    nome = c("Formação Florestal", "Floresta Plantada", "Pastagem",
+             "Mosaico de Usos", "Cultura Temporária", "Rios e Lagos",
+             "Área Urbanizada", "Campo Alagado e Pantanoso", "Não Observado"),
+    cor = c("#1f8d49", "#7a5900", "#edde8e", "#ffefc3",
+            "#C27BA0", "#2532e4", "#d4271e", "#519799", "#ffffff")
+  )
+  tags$div(
+    tags$h5(class = "titulo-legenda", "Legenda de Classes de Uso e Cobertura da Terra (MapBiomas)"),
+    tags$ul(style = "list-style: none; padding-left: 0;",
+            lapply(1:nrow(classes), function(i) {
+              tags$li(
+                tags$span(style = paste0("display:inline-block; width: 18px; height: 18px; background-color:", classes$cor[i], "; margin-right: 8px; border: 1px solid #555;")),
+                tags$span(class = "classe-legenda", classes$nome[i])
+              )
+            })
+    )
+  )
+}
 # --- UI ---
 ui <- fluidPage(
   tags$head(
@@ -124,8 +175,8 @@ ui <- fluidPage(
                sidebarPanel(
                  selectInput("classe_escolhida", "Escolha uma classe de uso e cobertura da terra:",
                              choices = c("Formação Florestal", "Floresta Plantada", "Pastagem",
-                                         "Mosaico de Usos", "Cultura Temporária", "Rios e Lagos",
-                                         "Área Urbanizada", "Campo Alagado e Área Pantanosa", "Não Observado")),
+                                         "Mosaico de Uso", "Agricultura Temporária", "Rios e Lagos",
+                                         "Área Urbanizada", "Campo Alagado e Pantanosa", "Não Observado")),
                  downloadButton("download_csv", "Baixar CSV"),
                  tags$hr(), legenda_lulc()
                ),
