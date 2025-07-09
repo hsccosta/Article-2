@@ -10,6 +10,7 @@ library(dplyr)
 library(ggplot2)
 library(plotly)
 library(tidyr)
+library(tools)
 
 # --- Caminhos fixos ---
 raster_2023_path <- "C:/Users/DELL/Desktop/Artigo 2_TC/Arquivos ArcGis/LULC_GDEs_50m/GDEs_50m_lulc_1m/2023.tif"
@@ -17,6 +18,12 @@ shp_apa_path <- "C:/Users/DELL/Desktop/Artigo 2_TC/Arquivos ArcGis/apa_de_campin
 logos_file <- "C:/Users/DELL/Desktop/Artigo 2_TC/Arquivos ArcGis/logos_combinados.jpg"
 img_folder <- "C:/Users/DELL/Desktop/Artigo 2_TC/Arquivos ArcGis/LULC_GDEs_50m/Interface_Observatório das Nascentes/lulc_raw/resymb/tiras_lulc"
 shp_recortes <- "C:/Users/DELL/Desktop/Artigo 2_TC/Arquivos ArcGis/LULC_GDEs_50m/Interface_Observatório das Nascentes/lulc_raw/resymb"
+save_path <- "C:/Users/DELL/Desktop/Artigo 2_TC/Arquivos ArcGis/LULC_GDEs_50m/Interface_Observatório das Nascentes/repositório"
+fotos_path <- file.path(save_path, "fotos")
+
+# Cria as pastas, se não existirem
+if (!dir.exists(save_path)) dir.create(save_path, recursive = TRUE)
+if (!dir.exists(fotos_path)) dir.create(fotos_path, recursive = TRUE)
 
 # --- Solicita arquivos Excel ao iniciar ---
 nascente_excel_path <- file.choose()
@@ -25,29 +32,6 @@ classe_excel_path <- file.choose()
 # --- Dados base ---
 raster_2023 <- raster(raster_2023_path)
 shp_apa <- st_read(shp_apa_path, quiet = TRUE)
-
-# --- Legenda ---
-legenda_lulc <- function() {
-  classes <- data.frame(
-    nome = c("Formação Florestal", "Floresta Plantada", "Pastagem",
-             "Mosaico de Usos", "Cultura Temporária", "Rios e Lagos",
-             "Área Urbanizada", "Campo Alagado e Área Pantanosa", "Não Observado"),
-    cor = c("#1f8d49", "#7a5900", "#edde8e", "#ffefc3",
-            "#C27BA0", "#2532e4", "#d4271e", "#519799", "#ffffff")
-  )
-  tags$div(
-    tags$h4(class = "titulo-legenda", HTML("<strong>Classes de Uso e Cobertura da Terra</strong>")),
-    tags$div(style = "display: flex; flex-direction: column;",
-             lapply(1:nrow(classes), function(i) {
-               tags$div(style = "display: flex; align-items: center; margin-bottom: 4px;",
-                        tags$div(style = paste0("width: 20px; height: 20px; background-color:", classes$cor[i],
-                                                "; margin-right: 5px; border: 1px solid #000;")),
-                        tags$span(classes$nome[i], class = "classe-legenda")
-               )
-             })
-    )
-  )
-}
 
 # --- UI ---
 ui <- fluidPage(
@@ -85,8 +69,6 @@ ui <- fluidPage(
           HTML("Observatório das Mudanças de Uso e Cobertura da Terra em Áreas de Nascentes v.1.0<br>Local: APA de Campinas")),
   
   tabsetPanel(
-    
-    # ✅ NOVA ABA: IDENTIFICAÇÃO
     tabPanel("Identificação",
              sidebarLayout(
                sidebarPanel(
@@ -99,12 +81,14 @@ ui <- fluidPage(
                  textInput("responsavel", "Responsável/Protetor(a):"),
                  selectInput("cercada", "Há Cercamento?", choices = c("Sim", "Não")),
                  fileInput("fotos_nascente", "Fotos:"),
-                 checkboxInput("consentimento", "Li e concordo com o termo de consentimento.", value = FALSE)
+                 textAreaInput("descricao", "Descrição:", "", rows = 3),
+                 textAreaInput("oportunidades", "Oportunidades para Conservação e Restauração:", "", rows = 3),
+                 textAreaInput("desafios", "Desafios para Conservação e Restauração:", "", rows = 3),
+                 checkboxInput("consentimento", "Li e concordo com o termo de consentimento.", value = FALSE),
+                 actionButton("salvar_dados", "Salvar Dados")
                )
              )
     ),
-    
-    # --- ABA ORIGINAL ---
     tabPanel("Buscar por Nascente",
              sidebarLayout(
                sidebarPanel(
@@ -119,8 +103,6 @@ ui <- fluidPage(
                )
              )
     ),
-    
-    # --- Demais abas seguem iguais ---
     tabPanel("Buscar por Propriedade",
              sidebarLayout(
                sidebarPanel(
@@ -176,7 +158,6 @@ ui <- fluidPage(
 
 # --- Server ---
 server <- function(input, output, session) {
-  
   df <- reactive({
     dados <- read_excel(nascente_excel_path)
     colnames_lower <- tolower(trimws(names(dados)))
@@ -195,7 +176,6 @@ server <- function(input, output, session) {
   output$props_for_nascente <- renderUI({
     req(input$nascente_id, df())
     props <- df()[df()$id == input$nascente_id, "id CAR", drop = TRUE]
-    if (length(props) == 0) return(tags$p("Nenhuma propriedade encontrada."))
     tags$p(class = "label-prop-nasc", HTML(paste0("<strong>Propriedade(s):</strong><br><span style='color: #5a7ca9;'>",
                                                   paste(unique(props), collapse = ", "), "</span>")))
   })
@@ -203,48 +183,30 @@ server <- function(input, output, session) {
   output$props_for_nascente_ident <- renderUI({
     req(input$nascente_id_ident, df())
     props <- df()[df()$id == input$nascente_id_ident, "id CAR", drop = TRUE]
-    if (length(props) == 0) return(tags$p("Nenhuma propriedade encontrada."))
     tags$p(class = "label-prop-nasc", HTML(paste0("<strong>Propriedade(s):</strong><br><span style='color: #5a7ca9;'>",
                                                   paste(unique(props), collapse = ", "), "</span>")))
-  })
-  
-  output$dados_autopreenchidos <- renderPrint({
-    req(input$nascente_id_ident, df())
-    registro <- df()[df()$id == input$nascente_id_ident, ]
-    if (nrow(registro) == 0) return("Dados não encontrados.")
-    campos <- c("id", "id CAR", "zona", "codigo do imóvel", "área do imóvel (ha)", "nº do módulo")
-    campos_validos <- campos[tolower(campos) %in% tolower(names(registro))]
-    info <- sapply(campos_validos, function(campo) paste(campo, ":", registro[[which(tolower(names(registro)) == tolower(campo))]]))
-    cat(paste(info, collapse = "\n"))
   })
   
   renderImageHelper <- function(nasc_id_val) {
     nasc_id_formatted <- sprintf("%04d", nasc_id_val)
     extensoes <- c(".jpg", ".jpeg", ".png", ".JPG", ".JPEG", ".PNG")
-    file_path <- NULL
     for (ext in extensoes) {
-      candidate <- file.path(img_folder, paste0(nasc_id_formatted, ext))
-      if (file.exists(candidate)) {
-        file_path <- candidate
-        break
+      file_path <- file.path(img_folder, paste0(nasc_id_formatted, ext))
+      if (file.exists(file_path)) {
+        tmp <- tempfile(fileext = ".jpg")
+        image_read(file_path) %>% image_scale("700x") %>% image_write(tmp)
+        uri <- dataURI(file = tmp, mime = "image/jpeg")
+        return(tags$img(src = uri, style = "max-width: 100%; height: auto;"))
       }
     }
-    if (is.null(file_path)) return(tags$p(paste("Imagem não encontrada para a nascente", nasc_id_val)))
-    tmp <- tempfile(fileext = ".jpg")
-    tryCatch({
-      image_read(file_path) %>% image_scale("700x") %>% image_write(tmp)
-      uri <- dataURI(file = tmp, mime = "image/jpeg")
-      tags$img(src = uri, style = "max-width: 100%; height: auto;")
-    }, error = function(e) tags$p(paste("Erro ao processar imagem:", e$message)))
+    tags$p(paste("Imagem não encontrada para a nascente", nasc_id_val))
   }
   
   output$image_nascente <- renderUI({
     req(input$nascente_id)
     tagList(
-      tags$div(
-        style = "display: flex; justify-content: space-between; max-width: 700px; margin-bottom: 10px;",
-        lapply(2016:2025, function(ano) tags$span(ano))
-      ),
+      tags$div(style = "display: flex; justify-content: space-between; max-width: 700px; margin-bottom: 10px;",
+               lapply(2016:2025, function(ano) tags$span(ano))),
       renderImageHelper(input$nascente_id)
     )
   })
@@ -252,18 +214,44 @@ server <- function(input, output, session) {
   output$image_propriedade <- renderUI({
     req(input$prop_id, df())
     nasc_ids <- df()[df()[["id CAR"]] == input$prop_id, "id", drop = TRUE]
-    if (length(nasc_ids) == 0) return(tags$p("Nenhuma nascente encontrada."))
     do.call(tagList, lapply(unique(nasc_ids), function(nid) {
       tagList(
         tags$hr(),
         tags$h5(paste("Nascente", nid)),
-        tags$div(
-          style = "display: flex; justify-content: space-between; max-width: 700px; margin-bottom: 10px;",
-          lapply(2016:2025, function(ano) tags$span(ano))
-        ),
+        tags$div(style = "display: flex; justify-content: space-between; max-width: 700px; margin-bottom: 10px;",
+                 lapply(2016:2025, function(ano) tags$span(ano))),
         renderImageHelper(nid)
       )
     }))
+  })
+  
+  observeEvent(input$salvar_dados, {
+    req(input$consentimento)
+    
+    # Dados principais
+    dados_salvar <- data.frame(
+      ID_Nascente = input$nascente_id_ident,
+      Nome_Nascente = input$nome_nascente,
+      Responsavel = input$responsavel,
+      Cercada = input$cercada,
+      Descricao = input$descricao,
+      Oportunidades = input$oportunidades,
+      Desafios = input$desafios,
+      stringsAsFactors = FALSE
+    )
+    
+    # Salva CSV
+    file_name <- paste0("nascente_", input$nascente_id_ident, ".csv")
+    write.csv(dados_salvar, file = file.path(save_path, file_name), row.names = FALSE)
+    
+    # Salva Foto, se houver
+    if (!is.null(input$fotos_nascente)) {
+      file_ext <- file_ext(input$fotos_nascente$name)
+      foto_nome <- paste0("nascente_", input$nascente_id_ident, "_foto.", file_ext)
+      file.copy(input$fotos_nascente$datapath, file.path(fotos_path, foto_nome), overwrite = TRUE)
+    }
+    
+    showModal(modalDialog("Dados e foto salvos com sucesso!", easyClose = TRUE))
   })
 }
 
