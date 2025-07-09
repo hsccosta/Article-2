@@ -15,8 +15,8 @@ library(tidyr)
 raster_2023_path <- "C:/Users/DELL/Desktop/Artigo 2_TC/Arquivos ArcGis/LULC_GDEs_50m/GDEs_50m_lulc_1m/2023.tif"
 shp_apa_path <- "C:/Users/DELL/Desktop/Artigo 2_TC/Arquivos ArcGis/apa_de_campinas.shp"
 logos_file <- "C:/Users/DELL/Desktop/Artigo 2_TC/Arquivos ArcGis/logos_combinados.jpg"
-img_folder <- "C:/Users/DELL/Desktop/Artigo 2_TC/Arquivos ArcGis/LULC_GDEs_50m/GDEs_50m_lulc_1m/recortes_por_feicao/series_temporais_de_lulc_tiradas"
-shp_recortes <- "C:/Users/DELL/Desktop/Artigo 2_TC/Arquivos ArcGis/LULC_GDEs_50m/GDEs_50m_lulc_1m/recortes_por_feicao"
+img_folder <- "C:/Users/DELL/Desktop/Artigo 2_TC/Arquivos ArcGis/LULC_GDEs_50m/Interface_Observatório das Nascentes/lulc_raw/resymb/tiras_lulc"
+shp_recortes <- "C:/Users/DELL/Desktop/Artigo 2_TC/Arquivos ArcGis/LULC_GDEs_50m/Interface_Observatório das Nascentes/lulc_raw/resymb"
 
 # --- Solicita arquivos Excel ao iniciar ---
 nascente_excel_path <- file.choose()
