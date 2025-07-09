@@ -1,4 +1,4 @@
-reescreva o script abaixo inserindo os seguintes itens sem perder nada do que já temos. Abaixo do título "Mudanças...." preciso que coloque os anos alinhados, com as bolinhas das imagens que vem logo abaixo. teremos de 2016 a 2025 mesmo os ultimos dois anos não tendo imagens ainda. forneça o script completo ajustado com apenas essas alterações. "# --- Bibliotecas --- 
+# --- Bibliotecas --- 
 library(shiny)
 library(readxl)
 library(magick)
