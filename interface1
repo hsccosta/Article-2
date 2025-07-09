@@ -42,7 +42,6 @@ legenda_lulc <- function() {
                tags$div(style = paste0("display: flex; align-items: center; margin-bottom: 4px;"),
                         tags$div(style = paste0("width: 20px; height: 20px; background-color:", classes$cor[i],
                                                 "; margin-right: 5px; border: 1px solid #000;")),
-                        
                         tags$span(classes$nome[i], class = "classe-legenda")
                )
              })
@@ -79,12 +78,13 @@ ui <- fluidPage(
         font-size: 114% !important;
       }
       .anos-mudancas {
-        font-size: 105% !important;
-        font-weight: bold;
+        font-size: 103% !important;
         margin-bottom: 10px;
         display: flex;
-        justify-content: space-between;
+        justify-content: start;
+        gap: 8mm; /* Espaçamento reduzido em 2mm (de 10mm padrão para 8mm) */
         max-width: 700px;
+        flex-wrap: wrap;
       }
     "))
   ),
@@ -128,7 +128,6 @@ ui <- fluidPage(
                )
              )
     ),
-    # ... (continua igual nas demais abas)
     tabPanel("Classe Predominante",
              sidebarLayout(
                sidebarPanel(
