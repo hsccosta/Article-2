@@ -16,6 +16,7 @@ raster_2023_path <- "C:/Users/DELL/Desktop/Artigo 2_TC/Arquivos ArcGis/LULC_GDEs
 shp_apa_path <- "C:/Users/DELL/Desktop/Artigo 2_TC/Arquivos ArcGis/apa_de_campinas.shp"
 logos_file <- "C:/Users/DELL/Desktop/Artigo 2_TC/Arquivos ArcGis/logos_combinados.jpg"
 img_folder <- "C:/Users/DELL/Desktop/Artigo 2_TC/Arquivos ArcGis/LULC_GDEs_50m/Interface_Observatório das Nascentes/lulc_raw/resymb/tiras_lulc"
+img_sentinel_folder <- "C:/Users/DELL/Desktop/Artigo 2_TC/Arquivos ArcGis/LULC_GDEs_50m/Interface_Observatório das Nascentes/Sentinel2/jpg/tiras sentinel"
 shp_recortes <- "C:/Users/DELL/Desktop/Artigo 2_TC/Arquivos ArcGis/LULC_GDEs_50m/Interface_Observatório das Nascentes/lulc_raw/resymb"
 
 # --- Solicita arquivos Excel ao iniciar ---
@@ -205,6 +206,26 @@ server <- function(input, output, session) {
     }, error = function(e) tags$p(paste("Erro ao processar imagem:", e$message)))
   }
   
+  renderSentinelHelper <- function(nasc_id_val) {
+    nasc_id_formatted <- sprintf("%04d", nasc_id_val)
+    extensoes <- c(".jpg", ".jpeg", ".png", ".JPG", ".JPEG", ".PNG")
+    file_path <- NULL
+    for (ext in extensoes) {
+      candidate <- file.path(img_sentinel_folder, paste0(nasc_id_formatted, ext))
+      if (file.exists(candidate)) {
+        file_path <- candidate
+        break
+      }
+    }
+    if (is.null(file_path)) return(NULL)
+    tmp <- tempfile(fileext = ".jpg")
+    tryCatch({
+      image_read(file_path) %>% image_scale("700x") %>% image_write(tmp)
+      uri <- dataURI(file = tmp, mime = "image/jpeg")
+      tags$img(src = uri, style = "max-width: 100%; height: auto; margin-top: 10px;")
+    }, error = function(e) NULL)
+  }
+  
   output$image_nascente <- renderUI({
     req(input$nascente_id)
     tagList(
@@ -212,7 +233,8 @@ server <- function(input, output, session) {
         style = "display: flex; justify-content: space-between; max-width: 700px; margin-bottom: 10px;",
         lapply(2016:2025, function(ano) tags$span(ano))
       ),
-      renderImageHelper(input$nascente_id)
+      renderImageHelper(input$nascente_id),
+      renderSentinelHelper(input$nascente_id)
     )
   })
   
@@ -228,12 +250,11 @@ server <- function(input, output, session) {
           style = "display: flex; justify-content: space-between; max-width: 700px; margin-bottom: 10px;",
           lapply(2016:2025, function(ano) tags$span(ano))
         ),
-        renderImageHelper(nid)
+        renderImageHelper(nid),
+        renderSentinelHelper(nid)
       )
     }))
   })
-  
-  # (demais partes do server continuam iguais até o final do script...)
 }
 
 # --- Executa o app ---
