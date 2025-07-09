@@ -103,7 +103,7 @@ ui <- fluidPage(
                  tags$hr(), legenda_lulc()
                ),
                mainPanel(
-                 tags$h4(class = "titulo-mudancas", "Mudanças de Uso e Cobertura da Terra (2016-2023)"),
+                 tags$h4(class = "titulo-mudancas", "Mudanças de Uso e Cobertura da Terra"),
                  tags$div(class = "anos-mudancas", 
                           lapply(2016:2025, function(ano) tags$span(ano))
                  ),
@@ -120,7 +120,7 @@ ui <- fluidPage(
                  tags$hr(), legenda_lulc()
                ),
                mainPanel(
-                 tags$h4(class = "titulo-mudancas", "Mudanças de Uso e Cobertura da Terra (2016-2023)"),
+                 tags$h4(class = "titulo-mudancas", "Mudanças de Uso e Cobertura da Terra"),
                  tags$div(class = "anos-mudancas", 
                           lapply(2016:2025, function(ano) tags$span(ano))
                  ),
