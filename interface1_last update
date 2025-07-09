@@ -1,0 +1,271 @@
+# --- Bibliotecas --- 
+library(shiny)
+library(readxl)
+library(magick)
+library(base64enc)
+library(raster)
+library(sf)
+library(leaflet)
+library(dplyr)
+library(ggplot2)
+library(plotly)
+library(tidyr)
+
+# --- Caminhos fixos ---
+raster_2023_path <- "C:/Users/DELL/Desktop/Artigo 2_TC/Arquivos ArcGis/LULC_GDEs_50m/GDEs_50m_lulc_1m/2023.tif"
+shp_apa_path <- "C:/Users/DELL/Desktop/Artigo 2_TC/Arquivos ArcGis/apa_de_campinas.shp"
+logos_file <- "C:/Users/DELL/Desktop/Artigo 2_TC/Arquivos ArcGis/logos_combinados.jpg"
+img_folder <- "C:/Users/DELL/Desktop/Artigo 2_TC/Arquivos ArcGis/LULC_GDEs_50m/Interface_Observatório das Nascentes/lulc_raw/resymb/tiras_lulc"
+shp_recortes <- "C:/Users/DELL/Desktop/Artigo 2_TC/Arquivos ArcGis/LULC_GDEs_50m/Interface_Observatório das Nascentes/lulc_raw/resymb"
+
+# --- Solicita arquivos Excel ao iniciar ---
+nascente_excel_path <- file.choose()
+classe_excel_path <- file.choose()
+
+# --- Dados base ---
+raster_2023 <- raster(raster_2023_path)
+shp_apa <- st_read(shp_apa_path, quiet = TRUE)
+
+# --- Legenda ---
+legenda_lulc <- function() {
+  classes <- data.frame(
+    nome = c("Formação Florestal", "Floresta Plantada", "Pastagem",
+             "Mosaico de Usos", "Cultura Temporária", "Rios e Lagos",
+             "Área Urbanizada", "Campo Alagado e Área Pantanosa", "Não Observado"),
+    cor = c("#1f8d49", "#7a5900", "#edde8e", "#ffefc3",
+            "#C27BA0", "#2532e4", "#d4271e", "#519799", "#ffffff")
+  )
+  tags$div(
+    tags$h4(class = "titulo-legenda", HTML("<strong>Classes de Uso e Cobertura da Terra</strong>")),
+    tags$div(style = "display: flex; flex-direction: column;",
+             lapply(1:nrow(classes), function(i) {
+               tags$div(style = "display: flex; align-items: center; margin-bottom: 4px;",
+                        tags$div(style = paste0("width: 20px; height: 20px; background-color:", classes$cor[i],
+                                                "; margin-right: 5px; border: 1px solid #000;")),
+                        tags$span(classes$nome[i], class = "classe-legenda")
+               )
+             })
+    )
+  )
+}
+
+# --- UI ---
+ui <- fluidPage(
+  tags$head(
+    tags$style(HTML("
+      body, .form-control, .selectize-input, .leaflet-popup-content,
+      .shiny-output-error-validation, .shiny-output-error,
+      h1, h2, h3, h4, h5, h6, label, .leaflet-control, .dataTables_wrapper {
+        font-family: 'Times New Roman', serif !important;
+      }
+      .titulo-principal {
+        font-size: 168% !important;
+      }
+      .titulo-legenda {
+        font-size: 98% !important;
+        font-weight: bold !important;
+      }
+      .titulo-mudancas {
+        font-size: 156% !important;
+      }
+      .input-menor label {
+        font-size: 104% !important;
+      }
+      .classe-legenda {
+        font-size: 104% !important;
+      }
+      .label-prop-nasc {
+        font-size: 114% !important;
+      }
+    "))
+  ),
+  
+  tags$img(src = dataURI(file = logos_file, mime = "image/jpeg"), style = "width: 380px;"),
+  tags$h2(class = "titulo-principal",
+          HTML("Observatório das Mudanças de Uso e Cobertura da Terra em Áreas de Nascentes v.1.0<br>Local: APA de Campinas")),
+  
+  tabsetPanel(
+    
+    # ✅ NOVA ABA: IDENTIFICAÇÃO
+    tabPanel("Identificação",
+             sidebarLayout(
+               sidebarPanel(
+                 numericInput("nascente_id_ident", "ID da Nascente (1 - 1326):", value = 1, min = 1, max = 1326),
+                 uiOutput("props_for_nascente_ident")
+               ),
+               mainPanel(
+                 tags$h4("Caracterização Autodeclarada"),
+                 textInput("nome_nascente", "Nome da Nascente:"),
+                 textInput("responsavel", "Responsável/Protetor(a):"),
+                 selectInput("cercada", "Há Cercamento?", choices = c("Sim", "Não")),
+                 fileInput("fotos_nascente", "Fotos:"),
+                 checkboxInput("consentimento", "Li e concordo com o termo de consentimento.", value = FALSE)
+               )
+             )
+    ),
+    
+    # --- ABA ORIGINAL ---
+    tabPanel("Buscar por Nascente",
+             sidebarLayout(
+               sidebarPanel(
+                 div(class = "input-menor",
+                     numericInput("nascente_id", "ID da Nascente (1 - 1326):", value = 1, min = 1, max = 1326)),
+                 uiOutput("props_for_nascente"),
+                 tags$hr(), legenda_lulc()
+               ),
+               mainPanel(
+                 tags$h4(class = "titulo-mudancas", "Mudanças de Uso e Cobertura da Terra por Ano"),
+                 uiOutput("image_nascente")
+               )
+             )
+    ),
+    
+    # --- Demais abas seguem iguais ---
+    tabPanel("Buscar por Propriedade",
+             sidebarLayout(
+               sidebarPanel(
+                 div(class = "input-menor",
+                     numericInput("prop_id", "ID da Propriedade (CAR) (1 - 675):", value = 1, min = 1, max = 675)),
+                 uiOutput("nascentes_for_prop"),
+                 tags$hr(), legenda_lulc()
+               ),
+               mainPanel(
+                 tags$h4(class = "titulo-mudancas", "Mudanças de Uso e Cobertura da Terra por Ano"),
+                 uiOutput("image_propriedade")
+               )
+             )
+    ),
+    tabPanel("Classe Predominante",
+             sidebarLayout(
+               sidebarPanel(
+                 selectInput("classe_escolhida", "Escolha uma classe de uso e cobertura da terra:",
+                             choices = c("Formação Florestal", "Floresta Plantada", "Pastagem",
+                                         "Mosaico de Usos", "Cultura Temporária", "Rios e Lagos",
+                                         "Área Urbanizada", "Campo Alagado e Área Pantanosa", "Não Observado")),
+                 downloadButton("download_csv", "Baixar CSV"),
+                 tags$hr(), legenda_lulc()
+               ),
+               mainPanel(
+                 tags$h4("Feições com essa classe como predominante:"),
+                 dataTableOutput("feicoes_predominantes"),
+                 tags$h4("Distribuição de Pixels por Classe nas Feições Selecionadas"),
+                 plotlyOutput("grafico_classe"),
+                 tags$h4("Localização das Feições no Mapa"),
+                 leafletOutput("mapa_classe", height = 400)
+               )
+             )
+    ),
+    tabPanel("Transições 2022-2023",
+             sidebarLayout(
+               sidebarPanel(
+                 numericInput("id_nascente_viz", "ID da Nascente (1 - 1326):", value = NA, min = 1, max = 1326),
+                 numericInput("id_prop_viz", "ID da Propriedade (CAR) (1 - 675):", value = NA, min = 1, max = 675),
+                 uiOutput("info_cross_viz"),
+                 tags$hr(), legenda_lulc()
+               ),
+               mainPanel(
+                 tags$h4("Feições Correspondentes no Raster (2023.tif):"),
+                 plotOutput("plot_raster_viz")
+               )
+             )
+    ),
+    tabPanel("Mapa",
+             leafletOutput("mapa_apa", height = 600))
+  )
+)
+
+# --- Server ---
+server <- function(input, output, session) {
+  
+  df <- reactive({
+    dados <- read_excel(nascente_excel_path)
+    colnames_lower <- tolower(trimws(names(dados)))
+    id_col <- which(colnames_lower == "id")
+    idcar_col <- which(colnames_lower %in% c("id car", "idcar", "id_car"))
+    if (length(id_col) != 1 || length(idcar_col) != 1) stop("Colunas 'id' e 'id CAR' não encontradas.")
+    names(dados)[id_col] <- "id"
+    names(dados)[idcar_col] <- "id CAR"
+    dados
+  })
+  
+  df_classes <- reactive({
+    as.data.frame(read_excel(classe_excel_path))
+  })
+  
+  output$props_for_nascente <- renderUI({
+    req(input$nascente_id, df())
+    props <- df()[df()$id == input$nascente_id, "id CAR", drop = TRUE]
+    if (length(props) == 0) return(tags$p("Nenhuma propriedade encontrada."))
+    tags$p(class = "label-prop-nasc", HTML(paste0("<strong>Propriedade(s):</strong><br><span style='color: #5a7ca9;'>",
+                                                  paste(unique(props), collapse = ", "), "</span>")))
+  })
+  
+  output$props_for_nascente_ident <- renderUI({
+    req(input$nascente_id_ident, df())
+    props <- df()[df()$id == input$nascente_id_ident, "id CAR", drop = TRUE]
+    if (length(props) == 0) return(tags$p("Nenhuma propriedade encontrada."))
+    tags$p(class = "label-prop-nasc", HTML(paste0("<strong>Propriedade(s):</strong><br><span style='color: #5a7ca9;'>",
+                                                  paste(unique(props), collapse = ", "), "</span>")))
+  })
+  
+  output$dados_autopreenchidos <- renderPrint({
+    req(input$nascente_id_ident, df())
+    registro <- df()[df()$id == input$nascente_id_ident, ]
+    if (nrow(registro) == 0) return("Dados não encontrados.")
+    campos <- c("id", "id CAR", "zona", "codigo do imóvel", "área do imóvel (ha)", "nº do módulo")
+    campos_validos <- campos[tolower(campos) %in% tolower(names(registro))]
+    info <- sapply(campos_validos, function(campo) paste(campo, ":", registro[[which(tolower(names(registro)) == tolower(campo))]]))
+    cat(paste(info, collapse = "\n"))
+  })
+  
+  renderImageHelper <- function(nasc_id_val) {
+    nasc_id_formatted <- sprintf("%04d", nasc_id_val)
+    extensoes <- c(".jpg", ".jpeg", ".png", ".JPG", ".JPEG", ".PNG")
+    file_path <- NULL
+    for (ext in extensoes) {
+      candidate <- file.path(img_folder, paste0(nasc_id_formatted, ext))
+      if (file.exists(candidate)) {
+        file_path <- candidate
+        break
+      }
+    }
+    if (is.null(file_path)) return(tags$p(paste("Imagem não encontrada para a nascente", nasc_id_val)))
+    tmp <- tempfile(fileext = ".jpg")
+    tryCatch({
+      image_read(file_path) %>% image_scale("700x") %>% image_write(tmp)
+      uri <- dataURI(file = tmp, mime = "image/jpeg")
+      tags$img(src = uri, style = "max-width: 100%; height: auto;")
+    }, error = function(e) tags$p(paste("Erro ao processar imagem:", e$message)))
+  }
+  
+  output$image_nascente <- renderUI({
+    req(input$nascente_id)
+    tagList(
+      tags$div(
+        style = "display: flex; justify-content: space-between; max-width: 700px; margin-bottom: 10px;",
+        lapply(2016:2025, function(ano) tags$span(ano))
+      ),
+      renderImageHelper(input$nascente_id)
+    )
+  })
+  
+  output$image_propriedade <- renderUI({
+    req(input$prop_id, df())
+    nasc_ids <- df()[df()[["id CAR"]] == input$prop_id, "id", drop = TRUE]
+    if (length(nasc_ids) == 0) return(tags$p("Nenhuma nascente encontrada."))
+    do.call(tagList, lapply(unique(nasc_ids), function(nid) {
+      tagList(
+        tags$hr(),
+        tags$h5(paste("Nascente", nid)),
+        tags$div(
+          style = "display: flex; justify-content: space-between; max-width: 700px; margin-bottom: 10px;",
+          lapply(2016:2025, function(ano) tags$span(ano))
+        ),
+        renderImageHelper(nid)
+      )
+    }))
+  })
+}
+
+# --- Executa o app ---
+shinyApp(ui, server)
