@@ -1,0 +1,65 @@
+[# Pacotes necessários
+if (!requireNamespace("magick")) install.packages("magick")
+library(magick)
+
+# Escolher diretório principal contendo subpastas "2016" a "2025"
+main_dir <- choose.dir(caption = "Selecione a pasta principal contendo as subpastas de 2016 a 2025")
+
+# Lista de anos (pastas)
+anos <- as.character(2016:2025)
+
+# Caminho para a primeira pasta (para contar os arquivos)
+primeira_pasta <- file.path(main_dir, anos[1])
+nomes_imagens <- list.files(primeira_pasta, pattern = "\\.jpg$", full.names = FALSE)
+num_tiras <- length(nomes_imagens)
+
+# Criar pasta de saída
+output_dir <- file.path(main_dir, "tiras sentinel")
+if (!dir.exists(output_dir)) dir.create(output_dir)
+
+# Parâmetros de dimensão
+dpi <- 300
+espaco_mm <- 2
+espaco_px <- round(espaco_mm / 25.4 * dpi)
+
+# Loop para montar cada tira
+for (i in seq_len(num_tiras)) {
+  nome_base <- nomes_imagens[i]  # exemplo: "00001.jpg"
+  
+  imagens <- list()
+  
+  for (ano in anos) {
+    caminho_img <- file.path(main_dir, ano, nome_base)
+    img <- image_read(caminho_img)
+    imagens[[length(imagens) + 1]] <- img
+  }
+  
+  # Verifica as dimensões da primeira imagem
+  largura_img <- image_info(imagens[[1]])$width
+  altura_img  <- image_info(imagens[[1]])$height
+  
+  # Cria espaços brancos de 2 mm
+  espacamento <- image_blank(width = espaco_px, height = altura_img, color = "white")
+  
+  # Intercala imagens com espaços brancos
+  imagens_intercaladas <- list()
+  for (j in seq_along(imagens)) {
+    imagens_intercaladas[[length(imagens_intercaladas) + 1]] <- imagens[[j]]
+    if (j < length(imagens)) {
+      imagens_intercaladas[[length(imagens_intercaladas) + 1]] <- espacamento
+    }
+  }
+  
+  # Junta horizontalmente
+  tira <- image_append(image_join(imagens_intercaladas), stack = FALSE)
+  
+  # Salva com nome "0001t.jpg", "0002t.jpg", ...
+  nome_saida <- sprintf("%04dt.jpg", i)
+  caminho_saida <- file.path(output_dir, nome_saida)
+  
+  # Salvar a tira
+  image_write(tira, path = caminho_saida, format = "jpg")
+  
+  cat(sprintf("✅ Tira %d salva como %s\n", i, nome_saida))
+}
+]
