@@ -111,6 +111,10 @@ ui <- fluidPage(
       .label-prop-nasc {
         font-size: 114% !important;
       }
+      /* Aumentar a largura da interface */
+      .container-fluid {
+        max-width: 1220px !important;
+      }
     "))
   ),
   
@@ -207,7 +211,21 @@ ui <- fluidPage(
     ),
     
     tabPanel("Mapa",
-             leafletOutput("mapa_apa", height = 600))
+             leafletOutput("mapa_apa", height = 600)
+    ),
+    
+    # ✅ Aba Sobre com ajustes solicitados
+    tabPanel("Sobre",
+             fluidPage(
+               tags$br(), tags$br(),
+               tags$h4("Observatório das Nascentes 1.0", style = "text-align: left; margin-bottom: 20px;"),
+               tags$p("Este aplicativo de código aberto foi desenvolvido no contexto da tese de doutorado de Henrique Simões de Carvalho Costa, orientado no Programa Ambiente & Sociedade por Drª Simone Aparecida Vieira e Drª Cristiana Simão Seixas, ambas do Laboratório de Ecologia e Manejo de Ecossistemas (LEME). As análises espaciais foram orientadas pelo Dr. Ramon Felipe Bicudo da Silva do Laboratório de Análises Espaciais, Conservação Ambiental e Sustentabilidade (LAECAS) e integram atividades referentes ao Treinamento Técnico como bolsista FAPESP no processo nº................ . A versão 1.0, criada em julho de 2025 para a Área de Proteção Ambiental de Campinas (APA de Campinas), teve como principal propósito apresentar aos proprietários rurais e demais tomadores de decisão um banco de dados com informações que orientem a priorização de esforços para conservação e recuperação de áreas de nascentes.",
+                      style = "text-align: justify;"),
+               tags$br(),
+               tags$p("Dúvidas e sugestões podem ser enviadas pelo e-mail: henriquesccosta@gmail.com",
+                      style = "text-align: justify; font-weight: bold;")
+             )
+    )
   )
 )
 
