@@ -14,6 +14,7 @@ library(tools)
 library(xml2)
 
 # --- Caminhos fixos ---
+raster_2023_path <- "C:/Users/DELL/Desktop/Artigo 2_TC/Arquivos ArcGis/LULC_GDEs_50m/Interface_Observatório das Nascentes/2023.tif"
 shp_apa_path <- "C:/Users/DELL/Desktop/Artigo 2_TC/Arquivos ArcGis/LULC_GDEs_50m/Interface_Observatório das Nascentes/apa_de_campinas.shp"
 shp_apa_path <- "C:/Users/DELL/Desktop/Artigo 2_TC/Arquivos ArcGis/LULC_GDEs_50m/Interface_Observatório das Nascentes/car_apa.shp"
 shp_apa_path <- "C:/Users/DELL/Desktop/Artigo 2_TC/Arquivos ArcGis/LULC_GDEs_50m/Interface_Observatório das Nascentes/GDEs_50m.shp"
@@ -29,7 +30,6 @@ if (!dir.exists(fotos_path)) dir.create(fotos_path, recursive = TRUE)
 
 # --- Solicita arquivos Excel ao iniciar ---
 nascente_excel_path <- file.choose()
-classe_excel_path <- file.choose()
 
 # --- Dados base ---
 raster_2023 <- raster(raster_2023_path)
@@ -73,7 +73,7 @@ legenda_lulc <- function() {
             "#C27BA0", "#2532e4", "#d4271e", "#519799", "#ffffff")
   )
   tags$div(
-    tags$h5(class = "titulo-legenda", "Legenda de Classes de Uso e Cobertura da Terra (MapBiomas)"),
+    tags$h5(class = "titulo-legenda", "Classes de Uso e Cobertura da Terra"),
     tags$ul(style = "list-style: none; padding-left: 0;",
             lapply(1:nrow(classes), function(i) {
               tags$li(
