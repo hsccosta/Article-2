@@ -134,11 +134,12 @@ ui <- fluidPage(
                  tags$h4("Caracterização Autodeclarada"),
                  textInput("nome_nascente", "Nome da Nascente:"),
                  textInput("responsavel", "Responsável/Protetor(a):"),
+                 textInput("patrono", "Patrono(a):"),
                  selectInput("cercada", "Há Cercamento?", choices = c("Sim", "Não")),
                  fileInput("fotos_nascente", "Fotos:"),
                  textAreaInput("descricao", "Descrição:", "", rows = 3),
-                 textAreaInput("oportunidades", "Oportunidades para Conservação e Restauração:", "", rows = 3),
-                 textAreaInput("desafios", "Desafios para Conservação e Restauração:", "", rows = 3),
+                 textAreaInput("oportunidades", "O que favorece a conservação/restauração?", "", rows = 3),
+                 textAreaInput("desafios", "O que dificulta a conservação/restauração?", "", rows = 3),
                  checkboxInput("consentimento", "Li e concordo com o termo de consentimento.", value = FALSE),
                  actionButton("salvar_dados", "Salvar Dados")
                )
@@ -180,8 +181,8 @@ ui <- fluidPage(
                sidebarPanel(
                  selectInput("classe_escolhida", "Escolha uma classe de uso e cobertura da terra:",
                              choices = c("Formação Florestal", "Floresta Plantada", "Pastagem",
-                                         "Mosaico de Uso", "Agricultura Temporária", "Rios e Lagos",
-                                         "Área Urbanizada", "Campo Alagado e Pantanosa", "Não Observado")),
+                                         "Mosaico de Usos", "Agricultura Temporária", "Rios e Lagos",
+                                         "Área Urbanizada", "Campo Alagado e Pantanoso", "Não Observado")),
                  downloadButton("download_csv", "Baixar CSV"),
                  tags$hr(), legenda_lulc()
                ),
@@ -219,7 +220,7 @@ ui <- fluidPage(
     tabPanel("Sobre",
              fluidPage(
                tags$br(), tags$br(),
-               tags$h4("Observatório das Nascentes 1.0", style = "text-align: left; margin-bottom: 20px;"),
+               tags$h4("Observatório das Nascentes 1.0", style = "text-align: left; margin-bottom: 30px;"),
                tags$p("Este aplicativo de código aberto foi desenvolvido no contexto da tese de doutorado de Henrique Simões de Carvalho Costa, orientado no Programa Ambiente & Sociedade por Drª Simone Aparecida Vieira e Drª Cristiana Simão Seixas, ambas do Laboratório de Ecologia e Manejo de Ecossistemas (LEME). As análises espaciais foram orientadas pelo Dr. Ramon Felipe Bicudo da Silva do Laboratório de Análises Espaciais, Conservação Ambiental e Sustentabilidade (LAECAS) e integram atividades referentes ao Treinamento Técnico como bolsista FAPESP no processo nº................ . A versão 1.0, criada em julho de 2025 para a Área de Proteção Ambiental de Campinas (APA de Campinas), teve como principal propósito apresentar aos proprietários rurais e demais tomadores de decisão um banco de dados com informações que orientem a priorização de esforços para conservação e recuperação de áreas de nascentes.",
                       style = "text-align: justify;"),
                tags$br(),
@@ -264,7 +265,7 @@ server <- function(input, output, session) {
   output$nascentes_for_prop <- renderUI({
     req(input$prop_id, df())
     nasc_ids <- df()[df()[["id CAR"]] == input$prop_id, "id", drop = TRUE]
-    tags$p(class = "label-prop-nasc", HTML(paste0("<strong>Nascente(es) na Propriedade:</strong><br><span style='color: #5a7ca9;'>",
+    tags$p(class = "label-prop-nasc", HTML(paste0("<strong>Nascente(s) na Propriedade:</strong><br><span style='color: #5a7ca9;'>",
                                                   paste(unique(nasc_ids), collapse = ", "), "</span>")))
   })
   
