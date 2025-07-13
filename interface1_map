@@ -1,0 +1,139 @@
+# --- Bibliotecas ---
+library(shiny)
+library(shinydashboard)
+library(leaflet)
+library(sf)
+library(readxl)
+library(DT)
+library(mapview)
+library(webshot2)  # Para salvar mapa como imagem
+
+# --- UI ---
+ui <- dashboardPage(
+  dashboardHeader(title = "Mapa da APA de Campinas"),
+  dashboardSidebar(
+    sidebarMenu(
+      menuItem("Mapa", tabName = "mapa", icon = icon("map")),
+      menuItem("Sobre", tabName = "sobre", icon = icon("info-circle")),
+      selectInput("camada_sel", "Camada a exibir:",
+                  choices = c("APA de Campinas", "APA CAR", "GDEs 50m"),
+                  selected = "APA de Campinas"),
+      selectInput("id_sel", "Destacar feição (ID):", choices = NULL),
+      downloadButton("exportar_mapa", "Exportar Mapa (.png)")
+    )
+  ),
+  dashboardBody(
+    tabItems(
+      tabItem(tabName = "mapa",
+              fluidRow(
+                box(width = 12, leafletOutput("mapa_interativo", height = 600))
+              ),
+              fluidRow(
+                box(width = 12, DTOutput("tabela_atributos"))
+              )
+      ),
+      tabItem(tabName = "sobre",
+              h2("Sobre este Aplicativo"),
+              p("Este aplicativo exibe camadas geográficas da APA de Campinas com destaque por feição."),
+              tags$ul(
+                tags$li("Camadas: APA, CAR, GDEs"),
+                tags$li("Destaque de feições por ID"),
+                tags$li("Exportação de mapa como imagem"),
+                tags$li("Visualização dos atributos da feição selecionada")
+              )
+      )
+    )
+  )
+)
+
+# --- Server ---
+server <- function(input, output, session) {
+  
+  # Caminhos dos shapefiles
+  path_apa    <- "C:/Users/DELL/Desktop/Artigo 2_TC/Arquivos ArcGis/LULC_GDEs_50m/Interface_Observatório das Nascentes/apa_de_campinas.shp"
+  path_car    <- "C:/Users/DELL/Desktop/Artigo 2_TC/Arquivos ArcGis/LULC_GDEs_50m/Interface_Observatório das Nascentes/apa_car.shp"
+  path_gdes   <- "C:/Users/DELL/Desktop/Artigo 2_TC/Arquivos ArcGis/LULC_GDEs_50m/Interface_Observatório das Nascentes/GDEs_50m.shp"
+  dados_excel <- read_excel("C:/Users/DELL/Desktop/Artigo 2_TC/Arquivos ArcGis/LULC_GDEs_50m/Interface_Observatório das Nascentes/0001.xlsx")
+  
+  # Shapefiles reativos
+  shape_apa <- reactive({ st_transform(st_read(path_apa, quiet = TRUE), 4326) })
+  shape_car <- reactive({ st_transform(st_read(path_car, quiet = TRUE), 4326) })
+  shape_gdes <- reactive({ st_transform(st_read(path_gdes, quiet = TRUE), 4326) })
+  
+  # Atualizar os IDs disponíveis para destaque
+  observe({
+    updateSelectInput(session, "id_sel",
+                      choices = unique(as.character(dados_excel$id)))
+  })
+  
+  # Mapa base
+  output$mapa_interativo <- renderLeaflet({
+    leaflet() %>%
+      addProviderTiles("Esri.WorldTopoMap") %>%
+      setView(lng = -47.0608, lat = -22.9056, zoom = 10)
+  })
+  
+  # Camadas dinâmicas
+  observe({
+    leafletProxy("mapa_interativo") %>% clearShapes()
+    sel <- input$camada_sel
+    camada <- switch(sel,
+                     "APA de Campinas" = shape_apa(),
+                     "APA CAR" = shape_car(),
+                     "GDEs 50m" = shape_gdes())
+    
+    leafletProxy("mapa_interativo") %>%
+      addPolygons(data = camada,
+                  fillColor = "transparent",
+                  color = "#444",
+                  weight = 1.5,
+                  group = sel)
+    
+    # Se houver ID selecionado, destacar
+    if (!is.null(input$id_sel) && input$id_sel %in% as.character(dados_excel$id)) {
+      linha <- dados_excel[dados_excel$id == input$id_sel, ]
+      coords <- st_as_sf(linha, coords = c("X", "Y"), crs = 31983) |> st_transform(4326)
+      
+      leafletProxy("mapa_interativo") %>%
+        addCircleMarkers(data = coords,
+                         radius = 8,
+                         color = "red",
+                         stroke = TRUE,
+                         fillOpacity = 0.8,
+                         label = ~paste("ID:", linha$id))
+    }
+  })
+  
+  # Atributos da feição selecionada
+  output$tabela_atributos <- renderDT({
+    if (!is.null(input$id_sel) && input$id_sel %in% as.character(dados_excel$id)) {
+      dados_excel[dados_excel$id == input$id_sel, ]
+    }
+  })
+  
+  # Exporta o mapa como imagem (requer webshot2 + mapview)
+  output$exportar_mapa <- downloadHandler(
+    filename = function() { paste0("mapa_destacado_", input$id_sel, ".png") },
+    content = function(file) {
+      map <- leaflet() %>%
+        addProviderTiles("Esri.WorldTopoMap") %>%
+        setView(lng = -47.0608, lat = -22.9056, zoom = 12)
+      
+      map <- switch(input$camada_sel,
+                    "APA de Campinas" = map %>% addPolygons(data = shape_apa(), color = "#444", weight = 1.5, fillOpacity = 0),
+                    "APA CAR" = map %>% addPolygons(data = shape_car(), color = "#444", weight = 1.5, fillOpacity = 0),
+                    "GDEs 50m" = map %>% addPolygons(data = shape_gdes(), color = "#444", weight = 1.5, fillOpacity = 0))
+      
+      if (!is.null(input$id_sel) && input$id_sel %in% as.character(dados_excel$id)) {
+        linha <- dados_excel[dados_excel$id == input$id_sel, ]
+        coords <- st_as_sf(linha, coords = c("X", "Y"), crs = 31983) |> st_transform(4326)
+        map <- map %>% addCircleMarkers(data = coords, color = "red", radius = 8)
+      }
+      
+      mapshot(map, file = file)
+    }
+  )
+}
+
+# --- Rodar app ---
+shinyApp(ui, server)
