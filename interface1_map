@@ -6,7 +6,7 @@ library(sf)
 library(readxl)
 library(DT)
 library(mapview)
-library(webshot2)  # Para salvar mapa como imagem
+library(webshot2)
 
 # --- UI ---
 ui <- dashboardPage(
@@ -16,7 +16,7 @@ ui <- dashboardPage(
       animation: blink-animation 1s infinite;
       stroke: black !important;
       stroke-width: 2 !important;
-      fill: #ffff00 !important;
+      fill: #cce6ff !important;
       fill-opacity: 1 !important;
     }
     @keyframes blink-animation {
@@ -30,8 +30,8 @@ ui <- dashboardPage(
       checkboxGroupInput("camadas_visiveis", "Camadas visíveis:",
                          choices = c("APA de Campinas", "APA CAR", "GDEs 50m"),
                          selected = c("APA de Campinas", "APA CAR", "GDEs 50m")),
-      selectInput("id_sel", "Destacar feição GDEs (ID):", choices = NULL),
-      selectInput("id_car", "Destacar feição CAR (ID):", choices = NULL),
+      textInput("ids_sel", "Destacar nascentes (FID):", placeholder = "ex: 12, 45, 321"),
+      textInput("ids_car", "Destacar propriedades CAR (FID_CAR):", placeholder = "ex: 5, 123, 675"),
       div(style = "position: absolute; bottom: 20px; width: 100%; text-align: center;",
           downloadButton("exportar_mapa", "Exportar Mapa (.png)")
       )
@@ -73,11 +73,6 @@ server <- function(input, output, session) {
   shape_car <- reactive({ st_transform(st_read(path_car, quiet = TRUE), 4326) })
   shape_gdes <- reactive({ st_transform(st_read(path_gdes, quiet = TRUE), 4326) })
   
-  observe({
-    updateSelectInput(session, "id_sel", choices = unique(as.character(dados_excel$fid)))
-    updateSelectInput(session, "id_car", choices = unique(as.character(dados_excel$fid_car)))
-  })
-  
   output$mapa_interativo <- renderLeaflet({
     bounds <- st_bbox(shape_apa())
     leaflet() %>%
@@ -105,37 +100,39 @@ server <- function(input, output, session) {
         addPolygons(data = shape_gdes(), fillColor = "transparent", color = "black", weight = 1, group = "GDEs 50m")
     }
     
-    if (!is.null(input$id_sel) && input$id_sel %in% as.character(dados_excel$fid)) {
+    if (!is.null(input$ids_sel)) {
+      ids_gdes <- as.numeric(unlist(strsplit(input$ids_sel, ",\\s*")))
       shape_gdes_data <- shape_gdes()
-      destaque <- shape_gdes_data[as.character(shape_gdes_data$fid) == input$id_sel, ]
-      if (nrow(destaque) > 0) {
+      destaques <- shape_gdes_data[shape_gdes_data$fid %in% ids_gdes, ]
+      if (nrow(destaques) > 0) {
         leafletProxy("mapa_interativo") %>%
-          addPolygons(data = destaque, group = "Destacado", layerId = "gdes_highlight",
-                      fillColor = "#ffff00", fillOpacity = 1, color = "black", weight = 2,
+          addPolygons(data = destaques, group = "Destacado", fillColor = "#cce6ff",
+                      fillOpacity = 1, color = "black", weight = 2,
                       options = pathOptions(className = "blink"))
       }
     }
     
-    if (!is.null(input$id_car) && input$id_car %in% as.character(dados_excel$fid_car)) {
+    if (!is.null(input$ids_car)) {
+      ids_car <- as.numeric(unlist(strsplit(input$ids_car, ",\\s*")))
       shape_car_data <- shape_car()
-      destaque_car <- shape_car_data[as.character(shape_car_data$fid_car) == input$id_car, ]
-      if (nrow(destaque_car) > 0) {
+      destaques_car <- shape_car_data[shape_car_data$fid_car %in% ids_car, ]
+      if (nrow(destaques_car) > 0) {
         leafletProxy("mapa_interativo") %>%
-          addPolygons(data = destaque_car, group = "Destacado", layerId = "car_highlight",
-                      fillColor = "#d3d3d3", fillOpacity = 0.7, color = "black", weight = 2,
-                      options = pathOptions(className = "blink"))
+          addPolygons(data = destaques_car, group = "Destacado",
+                      fillColor = "#a0522d", fillOpacity = 0.5, color = NA)
       }
     }
   })
   
   output$tabela_atributos <- renderDT({
-    if (!is.null(input$id_sel) && input$id_sel %in% as.character(dados_excel$fid)) {
-      dados_excel[dados_excel$fid == input$id_sel, ]
+    if (!is.null(input$ids_sel)) {
+      ids <- as.numeric(unlist(strsplit(input$ids_sel, ",\\s*")))
+      dados_excel[dados_excel$fid %in% ids, ]
     }
   })
   
   output$exportar_mapa <- downloadHandler(
-    filename = function() { paste0("mapa_destacado_", input$id_sel, ".png") },
+    filename = function() { paste0("mapa_destacado.png") },
     content = function(file) {
       bounds <- st_bbox(shape_apa())
       map <- leaflet() %>%
@@ -152,10 +149,17 @@ server <- function(input, output, session) {
         map <- map %>% addPolygons(data = shape_gdes(), color = "black", weight = 1, fillOpacity = 0)
       }
       
-      if (!is.null(input$id_sel) && input$id_sel %in% as.character(dados_excel$fid)) {
+      if (!is.null(input$ids_sel)) {
+        ids <- as.numeric(unlist(strsplit(input$ids_sel, ",\\s*")))
         shape_gdes_data <- shape_gdes()
-        destaque <- shape_gdes_data[as.character(shape_gdes_data$fid) == input$id_sel, ]
-        map <- map %>% addPolygons(data = destaque, color = "black", weight = 2, fillColor = "yellow", fillOpacity = 0.8)
+        destaques <- shape_gdes_data[shape_gdes_data$fid %in% ids, ]
+        map <- map %>% addPolygons(data = destaques, color = "black", weight = 2, fillColor = "#cce6ff", fillOpacity = 1)
+      }
+      if (!is.null(input$ids_car)) {
+        ids <- as.numeric(unlist(strsplit(input$ids_car, ",\\s*")))
+        shape_car_data <- shape_car()
+        destaques_car <- shape_car_data[shape_car_data$fid_car %in% ids, ]
+        map <- map %>% addPolygons(data = destaques_car, fillColor = "#a0522d", fillOpacity = 0.5, color = NA)
       }
       
       mapshot(map, file = file)
