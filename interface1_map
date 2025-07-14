@@ -15,9 +15,9 @@ ui <- dashboardPage(
     sidebarMenu(
       menuItem("Mapa", tabName = "mapa", icon = icon("map")),
       menuItem("Sobre", tabName = "sobre", icon = icon("info-circle")),
-      selectInput("camada_sel", "Camada a exibir:",
-                  choices = c("APA de Campinas", "APA CAR", "GDEs 50m"),
-                  selected = "APA de Campinas"),
+      checkboxGroupInput("camadas_visiveis", "Camadas visíveis:",
+                         choices = c("APA de Campinas", "APA CAR", "GDEs 50m"),
+                         selected = c("APA de Campinas", "APA CAR", "GDEs 50m")),
       selectInput("id_sel", "Destacar feição (ID):", choices = NULL),
       downloadButton("exportar_mapa", "Exportar Mapa (.png)")
     )
@@ -73,21 +73,36 @@ server <- function(input, output, session) {
       setView(lng = -47.0608, lat = -22.9056, zoom = 10)
   })
   
-  # Camadas dinâmicas
+  # Camadas dinâmicas com controle simultâneo
   observe({
-    leafletProxy("mapa_interativo") %>% clearShapes()
-    sel <- input$camada_sel
-    camada <- switch(sel,
-                     "APA de Campinas" = shape_apa(),
-                     "APA CAR" = shape_car(),
-                     "GDEs 50m" = shape_gdes())
+    leafletProxy("mapa_interativo") %>% clearGroup("APA de Campinas") %>% clearGroup("APA CAR") %>% clearGroup("GDEs 50m")
     
-    leafletProxy("mapa_interativo") %>%
-      addPolygons(data = camada,
-                  fillColor = "transparent",
-                  color = "#444",
-                  weight = 1.5,
-                  group = sel)
+    if ("APA de Campinas" %in% input$camadas_visiveis) {
+      leafletProxy("mapa_interativo") %>%
+        addPolygons(data = shape_apa(),
+                    fillColor = "transparent",
+                    color = "#555",
+                    weight = 1.5,
+                    group = "APA de Campinas")
+    }
+    
+    if ("APA CAR" %in% input$camadas_visiveis) {
+      leafletProxy("mapa_interativo") %>%
+        addPolygons(data = shape_car(),
+                    fillColor = "transparent",
+                    color = "#222",
+                    weight = 2,
+                    group = "APA CAR")
+    }
+    
+    if ("GDEs 50m" %in% input$camadas_visiveis) {
+      leafletProxy("mapa_interativo") %>%
+        addPolygons(data = shape_gdes(),
+                    fillColor = "transparent",
+                    color = "#f00",
+                    weight = 1,
+                    group = "GDEs 50m")
+    }
     
     # Se houver ID selecionado, destacar
     if (!is.null(input$id_sel) && input$id_sel %in% as.character(dados_excel$id)) {
@@ -119,10 +134,15 @@ server <- function(input, output, session) {
         addProviderTiles("Esri.WorldTopoMap") %>%
         setView(lng = -47.0608, lat = -22.9056, zoom = 12)
       
-      map <- switch(input$camada_sel,
-                    "APA de Campinas" = map %>% addPolygons(data = shape_apa(), color = "#444", weight = 1.5, fillOpacity = 0),
-                    "APA CAR" = map %>% addPolygons(data = shape_car(), color = "#444", weight = 1.5, fillOpacity = 0),
-                    "GDEs 50m" = map %>% addPolygons(data = shape_gdes(), color = "#444", weight = 1.5, fillOpacity = 0))
+      if ("APA de Campinas" %in% input$camadas_visiveis) {
+        map <- map %>% addPolygons(data = shape_apa(), color = "#555", weight = 1.5, fillOpacity = 0)
+      }
+      if ("APA CAR" %in% input$camadas_visiveis) {
+        map <- map %>% addPolygons(data = shape_car(), color = "#222", weight = 2, fillOpacity = 0)
+      }
+      if ("GDEs 50m" %in% input$camadas_visiveis) {
+        map <- map %>% addPolygons(data = shape_gdes(), color = "#f00", weight = 1, fillOpacity = 0)
+      }
       
       if (!is.null(input$id_sel) && input$id_sel %in% as.character(dados_excel$id)) {
         linha <- dados_excel[dados_excel$id == input$id_sel, ]
