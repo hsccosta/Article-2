@@ -18,11 +18,11 @@ ui <- dashboardPage(
       checkboxGroupInput("camadas_visiveis", "Camadas visíveis:",
                          choices = c("APA de Campinas", "APA CAR", "GDEs 50m"),
                          selected = c("APA de Campinas", "APA CAR", "GDEs 50m")),
-      selectInput("id_sel", "Destacar feição (ID):", choices = NULL)
-    ),
-    br(),
-    div(style = "text-align: center; padding: 10px;",
-        downloadButton("exportar_mapa", "Exportar Mapa (.png)")
+      selectInput("id_sel", "Destacar feição GDEs (ID):", choices = NULL),
+      selectInput("id_car", "Destacar feição CAR (ID):", choices = NULL),
+      div(style = "position: absolute; bottom: 20px; width: 100%; text-align: center;",
+          downloadButton("exportar_mapa", "Exportar Mapa (.png)")
+      )
     )
   ),
   dashboardBody(
@@ -67,18 +67,27 @@ server <- function(input, output, session) {
   observe({
     updateSelectInput(session, "id_sel",
                       choices = unique(as.character(dados_excel$id)))
+    if ("id" %in% names(shape_car())) {
+      updateSelectInput(session, "id_car",
+                        choices = unique(as.character(shape_car()$id)))
+    }
   })
   
-  # Mapa base
+  # Mapa base com ajuste de zoom automático
   output$mapa_interativo <- renderLeaflet({
+    bounds <- st_bbox(shape_apa())
     leaflet() %>%
       addProviderTiles("Esri.WorldTopoMap") %>%
-      setView(lng = -47.0608, lat = -22.9056, zoom = 10)
+      fitBounds(bounds[[1]], bounds[[2]], bounds[[3]], bounds[[4]])
   })
   
   # Camadas dinâmicas com controle simultâneo
   observe({
-    leafletProxy("mapa_interativo") %>% clearGroup("APA de Campinas") %>% clearGroup("APA CAR") %>% clearGroup("GDEs 50m")
+    leafletProxy("mapa_interativo") %>% 
+      clearGroup("APA de Campinas") %>% 
+      clearGroup("APA CAR") %>% 
+      clearGroup("GDEs 50m") %>%
+      clearGroup("Destacado")
     
     if ("APA de Campinas" %in% input$camadas_visiveis) {
       leafletProxy("mapa_interativo") %>%
@@ -94,7 +103,7 @@ server <- function(input, output, session) {
         addPolygons(data = shape_car(),
                     fillColor = "lightgray",
                     fillOpacity = 0.2,
-                    color = "#222",
+                    color = "#666",
                     weight = 2,
                     group = "APA CAR")
     }
@@ -108,18 +117,33 @@ server <- function(input, output, session) {
                     group = "GDEs 50m")
     }
     
-    # Se houver ID selecionado, destacar
+    # Destaque da feição com contorno amarelo fluorescente piscante
     if (!is.null(input$id_sel) && input$id_sel %in% as.character(dados_excel$id)) {
-      linha <- dados_excel[dados_excel$id == input$id_sel, ]
-      coords <- st_as_sf(linha, coords = c("X", "Y"), crs = 31983) |> st_transform(4326)
-      
+      shape_gdes_data <- shape_gdes()
+      if ("id" %in% names(shape_gdes_data)) {
+        destaque <- shape_gdes_data[shape_gdes_data$id == input$id_sel, ]
+      } else {
+        destaque <- shape_gdes_data[as.character(shape_gdes_data[[1]]) == input$id_sel, ]
+      }
       leafletProxy("mapa_interativo") %>%
-        addCircleMarkers(data = coords,
-                         radius = 8,
-                         color = "red",
-                         stroke = TRUE,
-                         fillOpacity = 0.8,
-                         label = ~paste("ID:", linha$id))
+        addPolylines(data = destaque,
+                     color = "#FFFF00",
+                     weight = 4,
+                     opacity = 1,
+                     group = "Destacado",
+                     options = pathOptions(pane = "overlayPane", className = "blink"))
+    }
+    
+    # Destaque da feição CAR com preenchimento cinza claro translúcido
+    if (!is.null(input$id_car) && input$id_car %in% as.character(shape_car()$id)) {
+      destaque_car <- shape_car()[shape_car()$id == input$id_car, ]
+      leafletProxy("mapa_interativo") %>%
+        addPolygons(data = destaque_car,
+                    fillColor = "lightgray",
+                    fillOpacity = 0.4,
+                    color = "#666",
+                    weight = 2,
+                    group = "Destacado")
     }
   })
   
@@ -134,24 +158,29 @@ server <- function(input, output, session) {
   output$exportar_mapa <- downloadHandler(
     filename = function() { paste0("mapa_destacado_", input$id_sel, ".png") },
     content = function(file) {
+      bounds <- st_bbox(shape_apa())
       map <- leaflet() %>%
         addProviderTiles("Esri.WorldTopoMap") %>%
-        setView(lng = -47.0608, lat = -22.9056, zoom = 12)
+        fitBounds(bounds[[1]], bounds[[2]], bounds[[3]], bounds[[4]])
       
       if ("APA de Campinas" %in% input$camadas_visiveis) {
         map <- map %>% addPolygons(data = shape_apa(), color = "#555", weight = 1.5, fillOpacity = 0)
       }
       if ("APA CAR" %in% input$camadas_visiveis) {
-        map <- map %>% addPolygons(data = shape_car(), color = "#222", weight = 2, fillColor = "lightgray", fillOpacity = 0.2)
+        map <- map %>% addPolygons(data = shape_car(), color = "#666", weight = 2, fillColor = "lightgray", fillOpacity = 0.2)
       }
       if ("GDEs 50m" %in% input$camadas_visiveis) {
         map <- map %>% addPolygons(data = shape_gdes(), color = "#f00", weight = 1, fillOpacity = 0)
       }
       
       if (!is.null(input$id_sel) && input$id_sel %in% as.character(dados_excel$id)) {
-        linha <- dados_excel[dados_excel$id == input$id_sel, ]
-        coords <- st_as_sf(linha, coords = c("X", "Y"), crs = 31983) |> st_transform(4326)
-        map <- map %>% addCircleMarkers(data = coords, color = "red", radius = 8)
+        shape_gdes_data <- shape_gdes()
+        if ("id" %in% names(shape_gdes_data)) {
+          destaque <- shape_gdes_data[shape_gdes_data$id == input$id_sel, ]
+        } else {
+          destaque <- shape_gdes_data[as.character(shape_gdes_data[[1]]) == input$id_sel, ]
+        }
+        map <- map %>% addPolylines(data = destaque, color = "#FFFF00", weight = 4, opacity = 1)
       }
       
       mapshot(map, file = file)
