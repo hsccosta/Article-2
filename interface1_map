@@ -12,6 +12,7 @@ library(webshot2)  # Para salvar mapa como imagem
 ui <- dashboardPage(
   dashboardHeader(title = "Mapa da APA de Campinas"),
   dashboardSidebar(
+    tags$head(tags$style(HTML(".blink { animation: blink-animation 1s steps(5, start) infinite; } @keyframes blink-animation { to { fill-opacity: 0.2; } }"))),
     sidebarMenu(
       menuItem("Mapa", tabName = "mapa", icon = icon("map")),
       menuItem("Sobre", tabName = "sobre", icon = icon("info-circle")),
@@ -52,28 +53,20 @@ ui <- dashboardPage(
 # --- Server ---
 server <- function(input, output, session) {
   
-  # Caminhos dos shapefiles
   path_apa    <- "C:/Users/DELL/Desktop/Artigo 2_TC/Arquivos ArcGis/LULC_GDEs_50m/Interface_Observatório das Nascentes/apa_de_campinas.shp"
   path_car    <- "C:/Users/DELL/Desktop/Artigo 2_TC/Arquivos ArcGis/LULC_GDEs_50m/Interface_Observatório das Nascentes/apa_car.shp"
   path_gdes   <- "C:/Users/DELL/Desktop/Artigo 2_TC/Arquivos ArcGis/LULC_GDEs_50m/Interface_Observatório das Nascentes/GDEs_50m.shp"
   dados_excel <- read_excel("C:/Users/DELL/Desktop/Artigo 2_TC/Arquivos ArcGis/LULC_GDEs_50m/Interface_Observatório das Nascentes/0001.xlsx")
   
-  # Shapefiles reativos
   shape_apa <- reactive({ st_transform(st_read(path_apa, quiet = TRUE), 4326) })
   shape_car <- reactive({ st_transform(st_read(path_car, quiet = TRUE), 4326) })
   shape_gdes <- reactive({ st_transform(st_read(path_gdes, quiet = TRUE), 4326) })
   
-  # Atualizar os IDs disponíveis para destaque
   observe({
-    updateSelectInput(session, "id_sel",
-                      choices = unique(as.character(dados_excel$id)))
-    if ("id" %in% names(shape_car())) {
-      updateSelectInput(session, "id_car",
-                        choices = unique(as.character(shape_car()$id)))
-    }
+    updateSelectInput(session, "id_sel", choices = unique(as.character(dados_excel$id)))
+    updateSelectInput(session, "id_car", choices = unique(as.character(dados_excel$`id CAR`)))
   })
   
-  # Mapa base com ajuste de zoom automático
   output$mapa_interativo <- renderLeaflet({
     bounds <- st_bbox(shape_apa())
     leaflet() %>%
@@ -81,7 +74,6 @@ server <- function(input, output, session) {
       fitBounds(bounds[[1]], bounds[[2]], bounds[[3]], bounds[[4]])
   })
   
-  # Camadas dinâmicas com controle simultâneo
   observe({
     leafletProxy("mapa_interativo") %>% 
       clearGroup("APA de Campinas") %>% 
@@ -91,70 +83,45 @@ server <- function(input, output, session) {
     
     if ("APA de Campinas" %in% input$camadas_visiveis) {
       leafletProxy("mapa_interativo") %>%
-        addPolygons(data = shape_apa(),
-                    fillColor = "transparent",
-                    color = "#555",
-                    weight = 1.5,
-                    group = "APA de Campinas")
+        addPolygons(data = shape_apa(), fillColor = "transparent", color = "#555", weight = 1.5, group = "APA de Campinas")
     }
-    
     if ("APA CAR" %in% input$camadas_visiveis) {
       leafletProxy("mapa_interativo") %>%
-        addPolygons(data = shape_car(),
-                    fillColor = "lightgray",
-                    fillOpacity = 0.2,
-                    color = "#666",
-                    weight = 2,
-                    group = "APA CAR")
+        addPolygons(data = shape_car(), fillColor = "lightgray", fillOpacity = 0.4, color = "#666", weight = 2, group = "APA CAR")
     }
-    
     if ("GDEs 50m" %in% input$camadas_visiveis) {
       leafletProxy("mapa_interativo") %>%
-        addPolygons(data = shape_gdes(),
-                    fillColor = "transparent",
-                    color = "#f00",
-                    weight = 1,
-                    group = "GDEs 50m")
+        addPolygons(data = shape_gdes(), fillColor = "transparent", color = "black", weight = 1, group = "GDEs 50m")
     }
     
-    # Destaque da feição com contorno amarelo fluorescente piscante
     if (!is.null(input$id_sel) && input$id_sel %in% as.character(dados_excel$id)) {
       shape_gdes_data <- shape_gdes()
-      if ("id" %in% names(shape_gdes_data)) {
-        destaque <- shape_gdes_data[shape_gdes_data$id == input$id_sel, ]
-      } else {
-        destaque <- shape_gdes_data[as.character(shape_gdes_data[[1]]) == input$id_sel, ]
+      destaque <- shape_gdes_data[as.character(shape_gdes_data$id) == input$id_sel, ]
+      if (nrow(destaque) > 0) {
+        leafletProxy("mapa_interativo") %>%
+          addPolygons(data = destaque, fillColor = "yellow", fillOpacity = 0.8, color = "black", weight = 2,
+                      group = "Destacado", options = pathOptions(className = "blink"))
       }
-      leafletProxy("mapa_interativo") %>%
-        addPolylines(data = destaque,
-                     color = "#FFFF00",
-                     weight = 4,
-                     opacity = 1,
-                     group = "Destacado",
-                     options = pathOptions(pane = "overlayPane", className = "blink"))
     }
     
-    # Destaque da feição CAR com preenchimento cinza claro translúcido
-    if (!is.null(input$id_car) && input$id_car %in% as.character(shape_car()$id)) {
-      destaque_car <- shape_car()[shape_car()$id == input$id_car, ]
-      leafletProxy("mapa_interativo") %>%
-        addPolygons(data = destaque_car,
-                    fillColor = "lightgray",
-                    fillOpacity = 0.4,
-                    color = "#666",
-                    weight = 2,
-                    group = "Destacado")
+    if (!is.null(input$id_car) && input$id_car %in% as.character(dados_excel$`id CAR`)) {
+      shape_car_data <- shape_car()
+      if ("id" %in% names(shape_car_data)) {
+        destaque_car <- shape_car_data[as.character(shape_car_data$id) == input$id_car, ]
+        if (nrow(destaque_car) > 0) {
+          leafletProxy("mapa_interativo") %>%
+            addPolygons(data = destaque_car, fillColor = "lightgray", fillOpacity = 0.4, color = "#666", weight = 2, group = "Destacado")
+        }
+      }
     }
   })
   
-  # Atributos da feição selecionada
   output$tabela_atributos <- renderDT({
     if (!is.null(input$id_sel) && input$id_sel %in% as.character(dados_excel$id)) {
       dados_excel[dados_excel$id == input$id_sel, ]
     }
   })
   
-  # Exporta o mapa como imagem (requer webshot2 + mapview)
   output$exportar_mapa <- downloadHandler(
     filename = function() { paste0("mapa_destacado_", input$id_sel, ".png") },
     content = function(file) {
@@ -170,17 +137,13 @@ server <- function(input, output, session) {
         map <- map %>% addPolygons(data = shape_car(), color = "#666", weight = 2, fillColor = "lightgray", fillOpacity = 0.2)
       }
       if ("GDEs 50m" %in% input$camadas_visiveis) {
-        map <- map %>% addPolygons(data = shape_gdes(), color = "#f00", weight = 1, fillOpacity = 0)
+        map <- map %>% addPolygons(data = shape_gdes(), color = "black", weight = 1, fillOpacity = 0)
       }
       
       if (!is.null(input$id_sel) && input$id_sel %in% as.character(dados_excel$id)) {
         shape_gdes_data <- shape_gdes()
-        if ("id" %in% names(shape_gdes_data)) {
-          destaque <- shape_gdes_data[shape_gdes_data$id == input$id_sel, ]
-        } else {
-          destaque <- shape_gdes_data[as.character(shape_gdes_data[[1]]) == input$id_sel, ]
-        }
-        map <- map %>% addPolylines(data = destaque, color = "#FFFF00", weight = 4, opacity = 1)
+        destaque <- shape_gdes_data[as.character(shape_gdes_data$id) == input$id_sel, ]
+        map <- map %>% addPolygons(data = destaque, color = "black", weight = 2, fillColor = "yellow", fillOpacity = 0.8)
       }
       
       mapshot(map, file = file)
