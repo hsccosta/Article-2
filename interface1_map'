@@ -1,0 +1,274 @@
+# --- Bibliotecas ---
+library(shiny)
+library(shinydashboard)
+library(leaflet)
+library(sf)
+library(readxl)
+library(DT)
+library(mapview)
+library(webshot2)
+
+# --- UI ---
+ui <- dashboardPage(
+  dashboardHeader(title = "Mapa da APA de Campinas"),
+  dashboardSidebar(
+    tags$head(tags$style(HTML("
+      .leaflet-interactive.blink {
+        animation: blink-animation 1s infinite;
+        stroke: black !important;
+        stroke-width: 2 !important;
+        fill: #cce6ff !important;
+        fill-opacity: 1 !important;
+      }
+      @keyframes blink-animation {
+        0% { fill-opacity: 1; }
+        50% { fill-opacity: 0.2; }
+        100% { fill-opacity: 1; }
+      }
+      .fid-label {
+        font-weight: bold;
+        font-size: 12px;
+        color: black;
+        text-shadow: -1px -1px 0 white, 1px -1px 0 white, -1px 1px 0 white, 1px 1px 0 white;
+      }
+    "))),
+    sidebarMenu(
+      menuItem("Mapa", tabName = "mapa", icon = icon("map")),
+      menuItem("Sobre", tabName = "sobre", icon = icon("info-circle")),
+      checkboxGroupInput("camadas_visiveis", "Camadas visíveis:",
+                         choices = c("APA de Campinas", "APA CAR", "GDEs 50m"),
+                         selected = c("APA de Campinas", "APA CAR", "GDEs 50m")),
+      textInput("ids_sel", "Destacar nascentes (FID):", placeholder = "ex: 12, 45, 321"),
+      uiOutput("info_nascentes"),
+      textInput("ids_car", "Destacar propriedades CAR (FID_CAR):", placeholder = "ex: 5, 123, 675"),
+      div(style = "position: absolute; bottom: 20px; width: 100%; text-align: center;",
+          downloadButton("exportar_mapa", "Exportar Mapa (.png)")
+      )
+    )
+  ),
+  dashboardBody(
+    tabItems(
+      tabItem(tabName = "mapa",
+              fluidRow(
+                box(width = 12, leafletOutput("mapa_interativo", height = 600))
+              )
+      ),
+      tabItem(tabName = "sobre",
+              h2("Sobre este Aplicativo"),
+              p("Este aplicativo exibe camadas geográficas da APA de Campinas com destaque por feição."),
+              tags$ul(
+                tags$li("Camadas: APA, CAR, GDEs"),
+                tags$li("Destaque de feições por ID"),
+                tags$li("Exportação de mapa como imagem"),
+                tags$li("Visualização dos atributos da feição selecionada")
+              )
+      )
+    )
+  )
+)
+
+# --- Server ---
+server <- function(input, output, session) {
+  
+  path_apa <- "C:/Users/DELL/Desktop/Artigo 2_TC/Arquivos ArcGis/LULC_GDEs_50m/Interface_Observatório das Nascentes/apa_de_campinas.shp"
+  path_car <- "C:/Users/DELL/Desktop/Artigo 2_TC/Arquivos ArcGis/LULC_GDEs_50m/Interface_Observatório das Nascentes/propriedades_car.shp"
+  path_gdes <- "C:/Users/DELL/Desktop/Artigo 2_TC/Arquivos ArcGis/LULC_GDEs_50m/Interface_Observatório das Nascentes/nascentes_50m.shp"
+  dados_excel <- read_excel("C:/Users/DELL/Desktop/Artigo 2_TC/Arquivos ArcGis/LULC_GDEs_50m/Interface_Observatório das Nascentes/0001.xlsx")
+  
+  shape_apa <- reactive({
+    st_transform(st_read(path_apa, quiet = TRUE), 4326)
+  })
+  
+  shape_car <- reactive({
+    st_transform(st_read(path_car, quiet = TRUE), 4326)
+  })
+  
+  shape_gdes <- reactive({
+    st_transform(st_read(path_gdes, quiet = TRUE), 4326)
+  })
+  
+  output$info_nascentes <- renderUI({
+    if (!is.null(input$ids_sel) && input$ids_sel != "") {
+      ids <- as.numeric(unlist(strsplit(input$ids_sel, ",\\s*")))
+      dados_selecionados <- dados_excel[dados_excel$fid %in% ids, ]
+      
+      if (nrow(dados_selecionados) > 0) {
+        div(
+          style = "max-height: 300px; overflow-y: auto; margin-top: 10px;",
+          h4("Propriedades das nascentes selecionadas:"),
+          renderTable(dados_selecionados)
+        )
+      } else {
+        p("Nenhuma nascente encontrada com os IDs informados.")
+      }
+    }
+  })
+  
+  output$mapa_interativo <- renderLeaflet({
+    bounds <- st_bbox(shape_apa())
+    leaflet() %>%
+      addProviderTiles("Esri.WorldTopoMap") %>%
+      fitBounds(bounds[[1]], bounds[[2]], bounds[[3]], bounds[[4]])
+  })
+  
+  observe({
+    leafletProxy("mapa_interativo") %>% 
+      clearGroup("APA de Campinas") %>% 
+      clearGroup("APA CAR") %>% 
+      clearGroup("GDEs 50m") %>%
+      clearGroup("Destacado") %>%
+      clearGroup("Marcadores")
+    
+    if ("APA de Campinas" %in% input$camadas_visiveis) {
+      leafletProxy("mapa_interativo") %>%
+        addPolygons(data = shape_apa(), fillColor = "transparent", 
+                    color = "#555", weight = 1.5, group = "APA de Campinas")
+    }
+    
+    if ("APA CAR" %in% input$camadas_visiveis) {
+      leafletProxy("mapa_interativo") %>%
+        addPolygons(data = shape_car(), fillColor = "lightgray", 
+                    fillOpacity = 0.2, color = "#666", weight = 2, group = "APA CAR")
+    }
+    
+    if ("GDEs 50m" %in% input$camadas_visiveis) {
+      leafletProxy("mapa_interativo") %>%
+        addPolygons(data = shape_gdes(), fillColor = "transparent", 
+                    color = "black", weight = 1, group = "GDEs 50m")
+    }
+    
+    if (!is.null(input$ids_sel) && input$ids_sel != "") {
+      ids_gdes <- as.numeric(unlist(strsplit(input$ids_sel, ",\\s*")))
+      shape_gdes_data <- shape_gdes()
+      destaques <- shape_gdes_data[shape_gdes_data$fid %in% ids_gdes, ]
+      
+      if (nrow(destaques) > 0) {
+        # Adiciona polígonos destacados
+        leafletProxy("mapa_interativo") %>%
+          addPolygons(data = destaques, group = "Destacado", 
+                      fillColor = "#cce6ff", fillOpacity = 1, 
+                      color = "black", weight = 2,
+                      options = pathOptions(className = "blink"))
+        
+        # Adiciona marcadores (alfinetes) com FID
+        centroides <- st_centroid(destaques)
+        
+        for (i in 1:nrow(centroides)) {
+          fid <- centroides$fid[i]
+          coords <- st_coordinates(centroides[i,])
+          
+          leafletProxy("mapa_interativo") %>%
+            addMarkers(
+              lng = coords[1, "X"],
+              lat = coords[1, "Y"],
+              label = as.character(fid),
+              labelOptions = labelOptions(
+                noHide = TRUE,
+                direction = "top",
+                className = "fid-label",
+                offset = c(0, -25)
+              ),
+              icon = makeIcon(
+                iconUrl = "https://cdn-icons-png.flaticon.com/512/684/684908.png",
+                iconWidth = 25,
+                iconHeight = 41,
+                iconAnchorX = 12,
+                iconAnchorY = 41
+              ),
+              group = "Marcadores"
+            )
+        }
+      }
+    }
+    
+    if (!is.null(input$ids_car) && input$ids_car != "") {
+      ids_car <- as.numeric(unlist(strsplit(input$ids_car, ",\\s*")))
+      shape_car_data <- shape_car()
+      destaques_car <- shape_car_data[shape_car_data$fid_car %in% ids_car, ]
+      
+      if (nrow(destaques_car) > 0) {
+        leafletProxy("mapa_interativo") %>%
+          addPolygons(data = destaques_car, group = "Destacado",
+                      fillColor = "#a0522d", fillOpacity = 0.5, color = NA)
+      }
+    }
+  })
+  
+  output$exportar_mapa <- downloadHandler(
+    filename = function() { 
+      paste0("mapa_destacado_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".png") 
+    },
+    content = function(file) {
+      map <- leaflet() %>%
+        addProviderTiles("Esri.WorldTopoMap") %>%
+        fitBounds(st_bbox(shape_apa())[[1]], st_bbox(shape_apa())[[2]], 
+                  st_bbox(shape_apa())[[3]], st_bbox(shape_apa())[[4]])
+      
+      if ("APA de Campinas" %in% input$camadas_visiveis) {
+        map <- map %>% addPolygons(data = shape_apa(), color = "#555", 
+                                   weight = 1.5, fillOpacity = 0)
+      }
+      
+      if ("APA CAR" %in% input$camadas_visiveis) {
+        map <- map %>% addPolygons(data = shape_car(), color = "#666", 
+                                   weight = 2, fillColor = "lightgray", 
+                                   fillOpacity = 0.2)
+      }
+      
+      if ("GDEs 50m" %in% input$camadas_visiveis) {
+        map <- map %>% addPolygons(data = shape_gdes(), color = "black", 
+                                   weight = 1, fillOpacity = 0)
+      }
+      
+      if (!is.null(input$ids_sel) && input$ids_sel != "") {
+        ids <- as.numeric(unlist(strsplit(input$ids_sel, ",\\s*")))
+        destaques <- shape_gdes()[shape_gdes()$fid %in% ids, ]
+        if (nrow(destaques) > 0) {
+          map <- map %>% addPolygons(data = destaques, color = "black", 
+                                     weight = 2, fillColor = "#cce6ff", 
+                                     fillOpacity = 1)
+          
+          centroides <- st_centroid(destaques)
+          for (i in 1:nrow(centroides)) {
+            fid <- centroides$fid[i]
+            coords <- st_coordinates(centroides[i,])
+            
+            map <- map %>% addMarkers(
+              lng = coords[1, "X"],
+              lat = coords[1, "Y"],
+              label = as.character(fid),
+              labelOptions = labelOptions(
+                noHide = TRUE,
+                direction = "top",
+                className = "fid-label",
+                offset = c(0, -25)
+              ),
+              icon = makeIcon(
+                iconUrl = "https://cdn-icons-png.flaticon.com/512/684/684908.png",
+                iconWidth = 25,
+                iconHeight = 41,
+                iconAnchorX = 12,
+                iconAnchorY = 41
+              )
+            )
+          }
+        }
+      }
+      
+      if (!is.null(input$ids_car) && input$ids_car != "") {
+        ids <- as.numeric(unlist(strsplit(input$ids_car, ",\\s*")))
+        destaques_car <- shape_car()[shape_car()$fid_car %in% ids, ]
+        if (nrow(destaques_car) > 0) {
+          map <- map %>% addPolygons(data = destaques_car, 
+                                     fillColor = "#a0522d", 
+                                     fillOpacity = 0.5, color = NA)
+        }
+      }
+      
+      mapshot(map, file = file)
+    }
+  )
+}
+
+# --- Rodar app ---
+shinyApp(ui, server)
