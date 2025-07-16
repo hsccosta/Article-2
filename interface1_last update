@@ -17,7 +17,6 @@ library(mapview)
 library(webshot2)
 
 # --- CONFIGURAÇÃO INICIAL ---
-# Define caminho base específico para sua máquina
 base_path <- "C:/Users/DELL/Desktop/Artigo 2_TC/Arquivos ArcGis/LULC_GDEs_50m/Interface_Observatório das Nascentes"
 
 # --- VERIFICAÇÃO DE PACOTES ---
@@ -27,7 +26,6 @@ required_packages <- c(
   "mapview", "webshot2"
 )
 
-# Instala pacotes faltantes silenciosamente
 suppressMessages({
   missing_packages <- required_packages[!required_packages %in% installed.packages()[,"Package"]]
   if(length(missing_packages) > 0) install.packages(missing_packages, quiet = TRUE)
@@ -42,13 +40,12 @@ file_paths <- list(
   logos = file.path(base_path, "logos_combinados.jpg"),
   qml = file.path(base_path, "brazil_col8.qml"),
   nascente_excel = file.path(base_path, "0001.xlsx"),
-  img_folder = file.path(base_path, "lulc_raw/resymb/tiras_lulc"),  # CAMINHO DAS IMAGENS
+  img_folder = file.path(base_path, "lulc_raw/resymb/tiras_lulc"),
   save_path = file.path(base_path, "repositorio"),
   fotos_path = file.path(base_path, "repositorio/fotos")
 )
 
 # --- FUNÇÕES AUXILIARES ---
-# Cria diretórios se não existirem
 ensure_dir <- function(path) {
   if(!dir.exists(path)) {
     dir.create(path, recursive = TRUE, showWarnings = FALSE)
@@ -56,7 +53,6 @@ ensure_dir <- function(path) {
   }
 }
 
-# Carrega arquivos com tratamento de erros
 safe_load <- function(file_path, loader_func, ...) {
   if(!file.exists(file_path)) {
     warning(paste("Arquivo não encontrado:", file_path), immediate. = TRUE)
@@ -74,20 +70,15 @@ safe_load <- function(file_path, loader_func, ...) {
 # --- CARREGAMENTO DE DADOS ---
 message("Carregando dados...")
 
-# Cria diretórios necessários
 ensure_dir(file_paths$save_path)
 ensure_dir(file_paths$fotos_path)
 
-# Carrega dados espaciais
 shp_apa <- safe_load(file_paths$shp_apa, st_read, quiet = TRUE)
 shp_car <- safe_load(file_paths$shp_car, st_read, quiet = TRUE)
 shp_nascentes <- safe_load(file_paths$shp_nascentes, st_read, quiet = TRUE)
 raster_2023 <- safe_load(file_paths$raster_2023, raster)
-
-# Carrega dados tabulares
 df_nascentes <- safe_load(file_paths$nascente_excel, read_excel)
 
-# Carrega arquivo de logos
 logos_img <- if(file.exists(file_paths$logos)) {
   dataURI(file = file_paths$logos, mime = "image/jpeg")
 } else {
@@ -174,21 +165,16 @@ legenda_lulc <- function() {
   )
 }
 
-# --- FUNÇÃO PARA RENDERIZAR IMAGENS (ATUALIZADA) ---
+# --- FUNÇÃO PARA RENDERIZAR IMAGENS ---
 render_image_helper <- function(nasc_id_val) {
-  # Formata o ID com 4 dígitos
   nasc_id_formatted <- sprintf("%04d", as.numeric(nasc_id_val))
   
-  # Verifica se o diretório existe
   if(!dir.exists(file_paths$img_folder)) {
     return(tags$div(class = "alert alert-danger",
-                   paste("Diretório de imagens não encontrado:", file_paths$img_folder)))
+                    paste("Diretório de imagens não encontrado:", file_paths$img_folder)))
   }
   
-  # Padrões de arquivo para procurar
   img_patterns <- c("\\.jpg$", "\\.jpeg$", "\\.png$")
-  
-  # Procura por arquivos correspondentes
   img_files <- NULL
   for(pattern in img_patterns) {
     img_files <- list.files(
@@ -202,17 +188,11 @@ render_image_helper <- function(nasc_id_val) {
   
   if(length(img_files) > 0) {
     tryCatch({
-      # Lê e processa a imagem
-      img <- image_read(img_files[1]) %>% 
-        image_scale("700x")  # Redimensiona para largura de 700px
-      
-      # Converte para URI
+      img <- image_read(img_files[1]) %>% image_scale("700x")
       tmp_file <- tempfile(fileext = ".jpg")
       image_write(img, tmp_file)
       uri <- base64enc::dataURI(file = tmp_file, mime = "image/jpeg")
       unlink(tmp_file)
-      
-      # Retorna a imagem
       tags$img(src = uri, style = "max-width: 100%; height: auto; border: 1px solid #ddd;")
     }, error = function(e) {
       tags$div(class = "alert alert-warning",
@@ -316,10 +296,22 @@ ui <- fluidPage(
         background-color: #d9edf7;
         border-color: #bce8f1;
       }
+      .foto-thumbnail {
+        max-width: 100px;
+        max-height: 100px;
+        margin-right: 10px;
+        margin-bottom: 10px;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+      }
+      .foto-container {
+        display: flex;
+        flex-wrap: wrap;
+        margin-top: 10px;
+      }
     "))
   ),
   
-  # Cabeçalho com logo
   if(!is.null(logos_img)) {
     tags$img(src = logos_img, style = "width: 380px;")
   } else {
@@ -337,7 +329,8 @@ ui <- fluidPage(
                sidebarPanel(
                  numericInput("nascente_id_ident", "ID da Nascente (1 - 1326):", 
                               value = 1, min = 1, max = 1326),
-                 uiOutput("props_for_nascente_ident")
+                 uiOutput("props_for_nascente_ident"),
+                 uiOutput("fotos_salvas_ui")
                ),
                mainPanel(
                  tags$h4("Caracterização Autodeclarada"),
@@ -345,7 +338,7 @@ ui <- fluidPage(
                  textInput("responsavel", "Responsável/Protetor(a):"),
                  textInput("patrono", "Patrono(a):"),
                  selectInput("cercada", "Há Cercamento?", choices = c("Sim", "Não")),
-                 fileInput("fotos_nascente", "Fotos:", multiple = TRUE),
+                 fileInput("fotos_nascente", "Enviar novas fotos:", multiple = TRUE),
                  textAreaInput("descricao", "Descrição:", "", rows = 3),
                  textAreaInput("oportunidades", "O que favorece a conservação/restauração?", "", rows = 3),
                  textAreaInput("desafios", "O que dificulta a conservação/restauração?", "", rows = 3),
@@ -509,6 +502,38 @@ server <- function(input, output, session) {
     st_transform(shp_nascentes, 4326)
   })
   
+  # Função para carregar dados existentes de uma nascente
+  load_nascente_data <- function(nasc_id) {
+    dados_path <- file.path(file_paths$fotos_path, paste0("nascente_", nasc_id, "_dados.csv"))
+    if(file.exists(dados_path)) {
+      read.csv(dados_path, stringsAsFactors = FALSE)
+    } else {
+      NULL
+    }
+  }
+  
+  # Observer para carregar dados quando o ID muda
+  observeEvent(input$nascente_id_ident, {
+    dados <- load_nascente_data(input$nascente_id_ident)
+    if(!is.null(dados)) {
+      updateTextInput(session, "nome_nascente", value = dados$Nome_Nascente)
+      updateTextInput(session, "responsavel", value = dados$Responsavel)
+      updateTextInput(session, "patrono", value = dados$Patrono)
+      updateSelectInput(session, "cercada", selected = dados$Cercada)
+      updateTextAreaInput(session, "descricao", value = dados$Descricao)
+      updateTextAreaInput(session, "oportunidades", value = dados$Oportunidades)
+      updateTextAreaInput(session, "desafios", value = dados$Desafios)
+    } else {
+      updateTextInput(session, "nome_nascente", value = "")
+      updateTextInput(session, "responsavel", value = "")
+      updateTextInput(session, "patrono", value = "")
+      updateSelectInput(session, "cercada", selected = "Não")
+      updateTextAreaInput(session, "descricao", value = "")
+      updateTextAreaInput(session, "oportunidades", value = "")
+      updateTextAreaInput(session, "desafios", value = "")
+    }
+  })
+  
   # Atualiza os inputs numéricos com os limites corretos
   observe({
     dados <- df()
@@ -534,7 +559,7 @@ server <- function(input, output, session) {
                          max = max(dados$fid_car, na.rm = TRUE))
     }
   })
-
+  
   # Mapa principal
   output$mapa_apa <- renderLeaflet({
     if(is.null(shape_apa())) {
@@ -554,7 +579,6 @@ server <- function(input, output, session) {
     proxy <- leafletProxy("mapa_apa")
     proxy %>% clearGroup(c("APA de Campinas", "APA CAR", "Nascentes 50m", "Destacado", "Marcadores"))
     
-    # Adicionar camadas visíveis
     if ("APA de Campinas" %in% input$camadas_visiveis && !is.null(shape_apa())) {
       proxy %>% addPolygons(
         data = shape_apa(), 
@@ -589,13 +613,11 @@ server <- function(input, output, session) {
       )
     }
     
-    # Destaque para feições selecionadas
     if (!is.null(input$ids_sel) && input$ids_sel != "" && !is.null(shape_nascentes())) {
       ids <- as.numeric(unlist(strsplit(input$ids_sel, ",\\s*")))
       feicoes <- shape_nascentes()[shape_nascentes()$fid %in% ids, ]
       
       if (nrow(feicoes) > 0) {
-        # Zoom com 30% de margem
         bbox <- st_bbox(feicoes)
         bbox_exp <- bbox + c(-0.3*(bbox[3]-bbox[1]), -0.3*(bbox[4]-bbox[2]),
                              0.3*(bbox[3]-bbox[1]), 0.3*(bbox[4]-bbox[2]))
@@ -613,7 +635,6 @@ server <- function(input, output, session) {
             label = ~paste("Nascente FID:", fid)
           )
         
-        # Adicionar marcadores
         centroides <- st_centroid(feicoes)
         flag_icon <- makeIcon(
           iconUrl = "data:image/svg+xml;charset=UTF-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='30' height='30' viewBox='0 0 30 30'%3E%3Cpath fill='%2342a5f5' d='M15 3L5 15l10 12 10-12z'/%3E%3Cpath fill='%2342a5f5' d='M15 3v24' stroke='%2342a5f5' stroke-width='0.5'/%3E%3Cpath fill='%2342a5f5' d='M15 3l6 7H9z'/%3E%3C/svg%3E",
@@ -649,12 +670,11 @@ server <- function(input, output, session) {
       paste0("mapa_apa_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".png")
     },
     content = function(file) {
-      showNotification("Preparando mapa para exportação...", duration = NULL)
+      showNotification("Preparando mapa para exportação...", duration = NULL, id = "export-notif")
       
       map <- leaflet() %>%
         addProviderTiles("Esri.WorldTopoMap")
       
-      # Ajustar viewport
       if (!is.null(input$ids_sel) && input$ids_sel != "" && !is.null(shape_nascentes())) {
         ids <- as.numeric(unlist(strsplit(input$ids_sel, ",\\s*")))
         feicoes <- shape_nascentes()[shape_nascentes()$fid %in% ids, ]
@@ -663,16 +683,15 @@ server <- function(input, output, session) {
           bbox_exp <- bbox + c(-0.3*(bbox[3]-bbox[1]), -0.3*(bbox[4]-bbox[2]),
                                0.3*(bbox[3]-bbox[1]), 0.3*(bbox[4]-bbox[2]))
           map <- map %>% fitBounds(bbox_exp[1], bbox_exp[2], bbox_exp[3], bbox_exp[4])
-        } else {
+        } else if (!is.null(shape_apa())) {
           bounds <- st_bbox(shape_apa())
           map <- map %>% fitBounds(bounds[[1]], bounds[[2]], bounds[[3]], bounds[[4]])
         }
-      } else {
+      } else if (!is.null(shape_apa())) {
         bounds <- st_bbox(shape_apa())
         map <- map %>% fitBounds(bounds[[1]], bounds[[2]], bounds[[3]], bounds[[4]])
       }
       
-      # Adicionar camadas
       if ("APA de Campinas" %in% input$camadas_visiveis && !is.null(shape_apa())) {
         map <- map %>% addPolygons(
           data = shape_apa(), 
@@ -704,7 +723,6 @@ server <- function(input, output, session) {
         )
       }
       
-      # Adicionar feições destacadas se existirem
       if (!is.null(input$ids_sel) && input$ids_sel != "" && !is.null(shape_nascentes())) {
         ids <- as.numeric(unlist(strsplit(input$ids_sel, ",\\s*")))
         feicoes <- shape_nascentes()[shape_nascentes()$fid %in% ids, ]
@@ -745,9 +763,8 @@ server <- function(input, output, session) {
         }
       }
       
-      # Exportar
-      removeNotification("export-notif")
       mapshot(map, file = file)
+      removeNotification("export-notif")
     }
   )
   
@@ -852,6 +869,37 @@ server <- function(input, output, session) {
     }))
   })
   
+  # Exibição de fotos salvas
+  output$fotos_salvas_ui <- renderUI({
+    req(input$nascente_id_ident)
+    
+    fotos <- list.files(
+      path = file_paths$fotos_path,
+      pattern = paste0("nascente_", input$nascente_id_ident, "_foto\\d+_.*\\.(jpg|jpeg|png)"),
+      full.names = TRUE
+    )
+    
+    if(length(fotos) > 0) {
+      tagList(
+        tags$h5("Fotos salvas:"),
+        tags$div(
+          class = "foto-container",
+          lapply(fotos, function(foto) {
+            tags$div(
+              tags$img(
+                src = dataURI(file = foto, mime = "image/jpeg"), 
+                class = "foto-thumbnail",
+                onclick = paste0("window.open('", dataURI(file = foto, mime = "image/jpeg"), "', '_blank')")
+              )
+            )
+          })
+        )
+      )
+    } else {
+      tags$p("Nenhuma foto salva para esta nascente.")
+    }
+  })
+  
   # Salvar dados
   observeEvent(input$salvar_dados, {
     if(!input$consentimento) {
@@ -872,18 +920,23 @@ server <- function(input, output, session) {
       stringsAsFactors = FALSE
     )
     
-    file_name <- paste0("nascente_", input$nascente_id_ident, "_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".csv")
+    file_name <- paste0("nascente_", input$nascente_id_ident, "_dados.csv")
     write.csv(dados_salvar, file = file.path(file_paths$fotos_path, file_name), row.names = FALSE)
     
-    # Salvar fotos se existirem
     if(!is.null(input$fotos_nascente)) {
+      old_photos <- list.files(
+        path = file_paths$fotos_path,
+        pattern = paste0("nascente_", input$nascente_id_ident, "_foto\\d+_.*\\.(jpg|jpeg|png)"),
+        full.names = TRUE
+      )
+      if(length(old_photos) > 0) file.remove(old_photos)
+      
       sapply(1:nrow(input$fotos_nascente), function(i) {
         file_ext <- tools::file_ext(input$fotos_nascente$name[i])
         foto_nome <- paste0("nascente_", input$nascente_id_ident, "_foto", i, "_", 
                             format(Sys.time(), "%Y%m%d_%H%M%S"), ".", file_ext)
         file.copy(input$fotos_nascente$datapath[i], 
-                  file.path(file_paths$fotos_path, foto_nome), 
-                  overwrite = TRUE)
+                  file.path(file_paths$fotos_path, foto_nome))
       })
     }
     
@@ -893,11 +946,39 @@ server <- function(input, output, session) {
       easyClose = TRUE,
       footer = modalButton("Fechar")
     ))
+    
+    # Atualiza a exibição das fotos
+    output$fotos_salvas_ui <- renderUI({
+      fotos <- list.files(
+        path = file_paths$fotos_path,
+        pattern = paste0("nascente_", input$nascente_id_ident, "_foto\\d+_.*\\.(jpg|jpeg|png)"),
+        full.names = TRUE
+      )
+      
+      if(length(fotos) > 0) {
+        tagList(
+          tags$h5("Fotos salvas:"),
+          tags$div(
+            class = "foto-container",
+            lapply(fotos, function(foto) {
+              tags$div(
+                tags$img(
+                  src = dataURI(file = foto, mime = "image/jpeg"), 
+                  class = "foto-thumbnail",
+                  onclick = paste0("window.open('", dataURI(file = foto, mime = "image/jpeg"), "', '_blank')")
+                )
+              )
+            })
+          )
+        )
+      } else {
+        tags$p("Nenhuma foto salva para esta nascente.")
+      }
+    })
   })
   
-  # Outputs adicionais (simplificados para exemplo)
+  # Outputs adicionais
   output$feicoes_predominantes <- renderDataTable({
-    # Implementação simplificada - adaptar conforme necessidade
     datatable(data.frame(), options = list(pageLength = 5))
   })
   
