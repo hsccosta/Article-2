@@ -42,7 +42,7 @@ file_paths <- list(
   logos = file.path(base_path, "logos_combinados.jpg"),
   qml = file.path(base_path, "brazil_col8.qml"),
   nascente_excel = file.path(base_path, "0001.xlsx"),
-  img_folder = file.path(base_path, "lulc_raw/resymb/tiras_lulc"),
+  img_folder = file.path(base_path, "lulc_raw/resymb/tiras_lulc"),  # CAMINHO DAS IMAGENS
   save_path = file.path(base_path, "repositorio"),
   fotos_path = file.path(base_path, "repositorio/fotos")
 )
@@ -174,26 +174,54 @@ legenda_lulc <- function() {
   )
 }
 
-# --- FUNÇÃO PARA RENDERIZAR IMAGENS ---
+# --- FUNÇÃO PARA RENDERIZAR IMAGENS (ATUALIZADA) ---
 render_image_helper <- function(nasc_id_val) {
-  nasc_id_formatted <- sprintf("%04d", nasc_id_val)
-  img_pattern <- paste0("^", nasc_id_formatted, "\\.(jpg|jpeg|png)$")
-  img_files <- list.files(
-    path = file_paths$img_folder,
-    pattern = img_pattern,
-    ignore.case = TRUE,
-    full.names = TRUE
-  )
+  # Formata o ID com 4 dígitos
+  nasc_id_formatted <- sprintf("%04d", as.numeric(nasc_id_val))
+  
+  # Verifica se o diretório existe
+  if(!dir.exists(file_paths$img_folder)) {
+    return(tags$div(class = "alert alert-danger",
+                   paste("Diretório de imagens não encontrado:", file_paths$img_folder)))
+  }
+  
+  # Padrões de arquivo para procurar
+  img_patterns <- c("\\.jpg$", "\\.jpeg$", "\\.png$")
+  
+  # Procura por arquivos correspondentes
+  img_files <- NULL
+  for(pattern in img_patterns) {
+    img_files <- list.files(
+      path = file_paths$img_folder,
+      pattern = paste0("^", nasc_id_formatted, pattern),
+      ignore.case = TRUE,
+      full.names = TRUE
+    )
+    if(length(img_files) > 0) break
+  }
   
   if(length(img_files) > 0) {
-    tmp <- tempfile(fileext = ".jpg")
-    img <- image_read(img_files[1]) %>% 
-      image_scale("700x") %>% 
-      image_write(tmp)
-    uri <- dataURI(file = tmp, mime = "image/jpeg")
-    tags$img(src = uri, style = "max-width: 100%; height: auto;")
+    tryCatch({
+      # Lê e processa a imagem
+      img <- image_read(img_files[1]) %>% 
+        image_scale("700x")  # Redimensiona para largura de 700px
+      
+      # Converte para URI
+      tmp_file <- tempfile(fileext = ".jpg")
+      image_write(img, tmp_file)
+      uri <- base64enc::dataURI(file = tmp_file, mime = "image/jpeg")
+      unlink(tmp_file)
+      
+      # Retorna a imagem
+      tags$img(src = uri, style = "max-width: 100%; height: auto; border: 1px solid #ddd;")
+    }, error = function(e) {
+      tags$div(class = "alert alert-warning",
+               paste("Erro ao carregar imagem:", e$message))
+    })
   } else {
-    tags$p(paste("Imagem não encontrada para a nascente", nasc_id_val))
+    tags$div(class = "alert alert-info",
+             paste("Imagem não encontrada para a nascente", nasc_id_val,
+                   "no diretório:", file_paths$img_folder))
   }
 }
 
@@ -266,6 +294,27 @@ ui <- fluidPage(
       }
       .container-fluid {
         max-width: 1220px !important;
+      }
+      .alert {
+        padding: 10px;
+        margin-bottom: 15px;
+        border: 1px solid transparent;
+        border-radius: 4px;
+      }
+      .alert-danger {
+        color: #a94442;
+        background-color: #f2dede;
+        border-color: #ebccd1;
+      }
+      .alert-warning {
+        color: #8a6d3b;
+        background-color: #fcf8e3;
+        border-color: #faebcc;
+      }
+      .alert-info {
+        color: #31708f;
+        background-color: #d9edf7;
+        border-color: #bce8f1;
       }
     "))
   ),
@@ -423,17 +472,24 @@ server <- function(input, output, session) {
     
     dados <- df_nascentes
     colnames_lower <- tolower(trimws(names(dados)))
-    id_col <- which(colnames_lower == "id")
-    idcar_col <- which(colnames_lower %in% c("id car", "idcar", "id_car"))
+    fid_col <- which(colnames_lower %in% c("fid", "id"))
+    fid_car_col <- which(colnames_lower %in% c("fid_car", "id_car", "id car", "car"))
     
-    if(length(id_col) != 1 || length(idcar_col) != 1) {
-      showNotification("Colunas 'id' e/ou 'id CAR' não encontradas nos dados.", 
+    if(length(fid_col) != 1 || length(fid_car_col) != 1) {
+      showNotification("Colunas 'fid' e/ou 'fid_car' não encontradas nos dados.", 
                        type = "error", duration = NULL)
       return(data.frame())
     }
     
-    names(dados)[id_col] <- "id"
-    names(dados)[idcar_col] <- "id CAR"
+    names(dados)[fid_col] <- "fid"
+    names(dados)[fid_car_col] <- "fid_car"
+    
+    dados <- dados %>%
+      mutate(
+        fid = as.numeric(fid),
+        fid_car = as.numeric(fid_car)
+      )
+    
     dados
   })
   
@@ -453,6 +509,32 @@ server <- function(input, output, session) {
     st_transform(shp_nascentes, 4326)
   })
   
+  # Atualiza os inputs numéricos com os limites corretos
+  observe({
+    dados <- df()
+    if(nrow(dados) > 0) {
+      updateNumericInput(session, "nascente_id_ident", 
+                         min = min(dados$fid, na.rm = TRUE),
+                         max = max(dados$fid, na.rm = TRUE))
+      
+      updateNumericInput(session, "nascente_id", 
+                         min = min(dados$fid, na.rm = TRUE),
+                         max = max(dados$fid, na.rm = TRUE))
+      
+      updateNumericInput(session, "prop_id", 
+                         min = min(dados$fid_car, na.rm = TRUE),
+                         max = max(dados$fid_car, na.rm = TRUE))
+      
+      updateNumericInput(session, "id_nascente_viz", 
+                         min = min(dados$fid, na.rm = TRUE),
+                         max = max(dados$fid, na.rm = TRUE))
+      
+      updateNumericInput(session, "id_prop_viz", 
+                         min = min(dados$fid_car, na.rm = TRUE),
+                         max = max(dados$fid_car, na.rm = TRUE))
+    }
+  })
+
   # Mapa principal
   output$mapa_apa <- renderLeaflet({
     if(is.null(shape_apa())) {
@@ -675,14 +757,18 @@ server <- function(input, output, session) {
     dados <- df()
     if(nrow(dados) == 0) return(tags$p("Dados não disponíveis."))
     
-    props <- dados[dados$id == input$nascente_id, "id CAR", drop = TRUE]
+    props <- dados %>% 
+      filter(fid == input$nascente_id) %>% 
+      pull(fid_car) %>% 
+      unique()
+    
     if(length(props) == 0) return(tags$p("Nenhuma propriedade encontrada para esta nascente."))
     
     tags$p(
       class = "label-prop-nasc", 
       HTML(paste0(
         "<strong>Propriedade(s):</strong><br>",
-        "<span style='color: #5a7ca9;'>", paste(unique(props), collapse = ", "), "</span>"
+        "<span style='color: #5a7ca9;'>", paste(props, collapse = ", "), "</span>"
       ))
     )
   })
@@ -692,14 +778,18 @@ server <- function(input, output, session) {
     dados <- df()
     if(nrow(dados) == 0) return(tags$p("Dados não disponíveis."))
     
-    props <- dados[dados$id == input$nascente_id_ident, "id CAR", drop = TRUE]
+    props <- dados %>% 
+      filter(fid == input$nascente_id_ident) %>% 
+      pull(fid_car) %>% 
+      unique()
+    
     if(length(props) == 0) return(tags$p("Nenhuma propriedade encontrada para esta nascente."))
     
     tags$p(
       class = "label-prop-nasc", 
       HTML(paste0(
         "<strong>Propriedade(s):</strong><br>",
-        "<span style='color: #5a7ca9;'>", paste(unique(props), collapse = ", "), "</span>"
+        "<span style='color: #5a7ca9;'>", paste(props, collapse = ", "), "</span>"
       ))
     )
   })
@@ -709,14 +799,18 @@ server <- function(input, output, session) {
     dados <- df()
     if(nrow(dados) == 0) return(tags$p("Dados não disponíveis."))
     
-    nasc_ids <- dados[dados[["id CAR"]] == input$prop_id, "id", drop = TRUE]
+    nasc_ids <- dados %>% 
+      filter(fid_car == input$prop_id) %>% 
+      pull(fid) %>% 
+      unique()
+    
     if(length(nasc_ids) == 0) return(tags$p("Nenhuma nascente encontrada para esta propriedade."))
     
     tags$p(
       class = "label-prop-nasc", 
       HTML(paste0(
         "<strong>Nascente(s) na Propriedade:</strong><br>",
-        "<span style='color: #5a7ca9;'>", paste(unique(nasc_ids), collapse = ", "), "</span>"
+        "<span style='color: #5a7ca9;'>", paste(nasc_ids, collapse = ", "), "</span>"
       ))
     )
   })
@@ -738,7 +832,11 @@ server <- function(input, output, session) {
     dados <- df()
     if(nrow(dados) == 0) return(tags$p("Dados não disponíveis."))
     
-    nasc_ids <- dados[dados[["id CAR"]] == input$prop_id, "id", drop = TRUE]
+    nasc_ids <- dados %>% 
+      filter(fid_car == input$prop_id) %>% 
+      pull(fid) %>% 
+      unique()
+    
     if(length(nasc_ids) == 0) return(tags$p("Nenhuma nascente encontrada para esta propriedade."))
     
     do.call(tagList, lapply(unique(nasc_ids), function(nid) {
