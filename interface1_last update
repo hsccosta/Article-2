@@ -336,7 +336,7 @@ ui <- fluidPage(
                  tags$h4("Caracterização Autodeclarada"),
                  textInput("nome_nascente", "Nome da Nascente:"),
                  textInput("responsavel", "Responsável/Protetor(a):"),
-                 textInput("patrono", "Patrono(a):"),
+                 textInput("apoiador", "Apoiador(a):"),
                  selectInput("cercada", "Há Cercamento?", choices = c("Sim", "Não")),
                  fileInput("fotos_nascente", "Enviar novas fotos:", multiple = TRUE),
                  textAreaInput("descricao", "Descrição:", "", rows = 3),
