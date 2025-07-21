@@ -31,6 +31,31 @@ suppressMessages({
   if(length(missing_packages) > 0) install.packages(missing_packages, quiet = TRUE)
 })
 
+gerar_lista_predominancia <- function(df, classe_escolhida) {
+  colunas_pct <- grep("^%_", names(df), value = TRUE)
+  classe_pred <- apply(df[, colunas_pct], 1, function(x) {
+    as.numeric(gsub("%_", "", names(x)[which.max(x)]))
+  })
+  df$classe_predominante <- classe_pred
+  df_filtrado <- df[df$classe_predominante == classe_escolhida, ]
+  col_classe <- paste0("%_", classe_escolhida)
+  df_filtrado <- df_filtrado[order(-df_filtrado[[col_classe]]), ]
+  lista_resultado <- vector("list", nrow(df_filtrado))
+  for (i in seq_len(nrow(df_filtrado))) {
+    linha <- df_filtrado[i, ]
+    outras_classes <- linha[, colunas_pct[!colunas_pct %in% col_classe]]
+    outras_fmt <- paste(names(outras_classes), sprintf("%.2f%%", outras_classes), collapse = " | ")
+    lista_resultado[[i]] <- paste0(
+      i, ". Nascente: ", linha$fid,
+      " | Propriedade(s): ", linha$cod_imovel,
+      " | Classe ", classe_escolhida, ": ", sprintf("%.2f%%", linha[[col_classe]]),
+      " | Outras: ", outras_fmt
+    )
+  }
+  return(lista_resultado)
+}
+
+
 # --- DEFINIÇÃO DE CAMINHOS COMPLETOS ---
 file_paths <- list(
   raster_2023 = file.path(base_path, "2023.tif"),
@@ -361,14 +386,15 @@ ui <- fluidPage(
     tabPanel("Classe Predominante",
              sidebarLayout(
                sidebarPanel(
-                 selectInput("classe_escolhida", "Escolha uma classe de uso e cobertura da terra:",
+                 selectInput("classe_escolhida", "Classe de Interesse:",
                              choices = c("Formação Florestal", "Floresta Plantada", "Pastagem",
                                          "Mosaico de Usos", "Cultura Temporária", "Rios e Lagos",
-                                         "Área Urbanizada", "Campo Alagado e Pantanoso", "Não Observado")),
-                 downloadButton("download_csv", "Baixar CSV", class = "btn-success"),
-                 tags$hr(), 
+                                         "Área Urbanizada", "Campo Alagado e Pantanoso", "Não Observado"))
                ),
-               mainPanel()
+               mainPanel(
+                 tags$h4("Nascentes com Classe Predominante Selecionada"),
+                 uiOutput("resultado_classe")
+               )
              )
     ),
     
@@ -984,7 +1010,32 @@ server <- function(input, output, session) {
   })
   
   # Outputs adicionais
-  output$feicoes_predominantes <- renderDataTable({
+  output$resultado_classe <- renderUI({
+    req(input$classe_escolhida)
+    
+    classe_numerica <- switch(input$classe_escolhida,
+                              "Formação Florestal" = 3,
+                              "Floresta Plantada" = 9,
+                              "Pastagem" = 11,
+                              "Mosaico de Usos" = 15,
+                              "Cultura Temporária" = 19,
+                              "Rios e Lagos" = 21,
+                              "Área Urbanizada" = 24,
+                              "Campo Alagado e Pantanoso" = 25,
+                              "Não Observado" = 33,
+                              NA
+    )
+    
+    if (is.na(classe_numerica)) return(tags$p("Classe inválida."))
+    
+    dados <- df()
+    if (nrow(dados) == 0) return(tags$p("Dados não disponíveis."))
+    
+    lista <- gerar_lista_predominancia(dados, classe_numerica)
+    HTML(paste("<ul>", paste0("<li>", lista, "</li>"), "</ul>"))
+  })
+  
+   output$feicoes_predominantes <- renderDataTable({
     datatable(data.frame(), options = list(pageLength = 5))
   })
   
