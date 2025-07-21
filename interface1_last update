@@ -324,30 +324,6 @@ ui <- fluidPage(
   ),
   
   tabsetPanel(
-    tabPanel("Identificação",
-             sidebarLayout(
-               sidebarPanel(
-                 numericInput("nascente_id_ident", "ID da Nascente (1 - 1326):", 
-                              value = 1, min = 1, max = 1326),
-                 uiOutput("props_for_nascente_ident"),
-                 uiOutput("fotos_salvas_ui")
-               ),
-               mainPanel(
-                 tags$h4("Caracterização Autodeclarada"),
-                 textInput("nome_nascente", "Nome da Nascente:"),
-                 textInput("responsavel", "Responsável/Protetor(a):"),
-                 textInput("apoiador", "Apoiador(a):"),
-                 selectInput("cercada", "Há Cercamento?", choices = c("Sim", "Não")),
-                 fileInput("fotos_nascente", "Enviar novas fotos:", multiple = TRUE),
-                 textAreaInput("descricao", "Descrição:", "", rows = 3),
-                 textAreaInput("oportunidades", "O que favorece a conservação/restauração?", "", rows = 3),
-                 textAreaInput("desafios", "O que dificulta a conservação/restauração?", "", rows = 3),
-                 checkboxInput("consentimento", "Li e concordo com o termo de consentimento.", value = FALSE),
-                 actionButton("salvar_dados", "Salvar Dados", class = "btn-primary")
-               )
-             )
-    ),
-    
     tabPanel("Buscar por Nascente",
              sidebarLayout(
                sidebarPanel(
@@ -391,16 +367,8 @@ ui <- fluidPage(
                                          "Área Urbanizada", "Campo Alagado e Pantanoso", "Não Observado")),
                  downloadButton("download_csv", "Baixar CSV", class = "btn-success"),
                  tags$hr(), 
-                 legenda_lulc()
                ),
-               mainPanel(
-                 tags$h4("Feições com essa classe como predominante:"),
-                 dataTableOutput("feicoes_predominantes"),
-                 tags$h4("Distribuição de Pixels por Classe nas Feições Selecionadas"),
-                 plotlyOutput("grafico_classe"),
-                 tags$h4("Localização das Feições no Mapa"),
-                 leafletOutput("mapa_classe", height = 400)
-               )
+               mainPanel()
              )
     ),
     
@@ -415,10 +383,7 @@ ui <- fluidPage(
                  tags$hr(), 
                  legenda_lulc()
                ),
-               mainPanel(
-                 tags$h4("Feições Correspondentes no Raster (2023.tif):"),
-                 plotOutput("plot_raster_viz")
-               )
+               mainPanel()
              )
     ),
     
@@ -435,6 +400,30 @@ ui <- fluidPage(
                ),
                mainPanel(
                  leafletOutput("mapa_apa", height = 600)
+               )
+             )
+    ),
+    
+    tabPanel("Identificação",
+             sidebarLayout(
+               sidebarPanel(
+                 numericInput("nascente_id_ident", "ID da Nascente (1 - 1326):", 
+                              value = 1, min = 1, max = 1326),
+                 uiOutput("props_for_nascente_ident"),
+                 uiOutput("fotos_salvas_ui")
+               ),
+               mainPanel(
+                 tags$h4("Caracterização Autodeclarada"),
+                 textInput("nome_nascente", "Nome da Nascente:"),
+                 textInput("responsavel", "Responsável/Protetor(a):"),
+                 textInput("apoiador", "Apoiador(a):"),
+                 selectInput("cercada", "Há Cercamento?", choices = c("Sim", "Não")),
+                 fileInput("fotos_nascente", "Enviar novas fotos:", multiple = TRUE),
+                 textAreaInput("descricao", "Descrição:", "", rows = 3),
+                 textAreaInput("oportunidades", "O que favorece a conservação/restauração?", "", rows = 3),
+                 textAreaInput("desafios", "O que dificulta a conservação/restauração?", "", rows = 3),
+                 checkboxInput("consentimento", "Li e concordo com o termo de consentimento.", value = FALSE),
+                 actionButton("salvar_dados", "Salvar Dados", class = "btn-primary")
                )
              )
     ),
@@ -559,6 +548,23 @@ server <- function(input, output, session) {
                          max = max(dados$fid_car, na.rm = TRUE))
     }
   })
+  
+  # --- SINCRONIZAR inputs de nascente ---
+  observeEvent(input$nascente_id_ident, {
+    updateNumericInput(session, "nascente_id", value = input$nascente_id_ident)
+    updateNumericInput(session, "id_nascente_viz", value = input$nascente_id_ident)
+  })
+  
+  observeEvent(input$nascente_id, {
+    updateNumericInput(session, "nascente_id_ident", value = input$nascente_id)
+    updateNumericInput(session, "id_nascente_viz", value = input$nascente_id)
+  })
+  
+  observeEvent(input$id_nascente_viz, {
+    updateNumericInput(session, "nascente_id", value = input$id_nascente_viz)
+    updateNumericInput(session, "nascente_id_ident", value = input$id_nascente_viz)
+  })
+  
   
   # Mapa principal
   output$mapa_apa <- renderLeaflet({
