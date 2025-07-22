@@ -32,29 +32,82 @@ suppressMessages({
 })
 
 gerar_lista_predominancia <- function(df, classe_escolhida) {
+  # Mapeamento CORRETO conforme especificado
+  classe_nomes <- c(
+    "3" = "Formação Florestal",
+    "9" = "Floresta Plantada",
+    "11" = "Campo Alagado e Área Pantanosa",
+    "15" = "Pastagem",
+    "19" = "Lavoura Temporária",
+    "21" = "Mosaico de Usos",
+    "24" = "Área Urbanizada",
+    "25" = "Outras Áreas não Vegetadas",
+    "33" = "Rio e Lago"
+  )
+  
+  # Identifica colunas de porcentagem
   colunas_pct <- grep("^%_", names(df), value = TRUE)
-  classe_pred <- apply(df[, colunas_pct], 1, function(x) {
+  
+  # Determina classe predominante para cada linha
+  df$classe_predominante <- apply(df[, colunas_pct], 1, function(x) {
     as.numeric(gsub("%_", "", names(x)[which.max(x)]))
   })
-  df$classe_predominante <- classe_pred
+  
+  # Filtra para a classe escolhida e ordena
   df_filtrado <- df[df$classe_predominante == classe_escolhida, ]
   col_classe <- paste0("%_", classe_escolhida)
   df_filtrado <- df_filtrado[order(-df_filtrado[[col_classe]]), ]
+  
   lista_resultado <- vector("list", nrow(df_filtrado))
+  
   for (i in seq_len(nrow(df_filtrado))) {
     linha <- df_filtrado[i, ]
-    outras_classes <- linha[, colunas_pct[!colunas_pct %in% col_classe]]
-    outras_fmt <- paste(names(outras_classes), sprintf("%.2f%%", outras_classes), collapse = " | ")
-    lista_resultado[[i]] <- paste0(
-      i, ". Nascente: ", linha$fid,
-      " | Propriedade(s): ", linha$cod_imovel,
-      " | Classe ", classe_escolhida, ": ", sprintf("%.2f%%", linha[[col_classe]]),
-      " | Outras: ", outras_fmt
+    
+    # Remove "CAR" dos códigos de propriedade
+    propriedades <- gsub("CAR", "", as.character(linha$cod_imovel))
+    
+    # Processa classes não predominantes
+    outras_classes <- linha[, colunas_pct[!colunas_pct %in% col_classe, drop = FALSE]]
+    
+    # Formata as classes secundárias
+    outras_linhas <- sapply(names(outras_classes), function(col) {
+      valor <- as.numeric(linha[[col]])
+      if (valor > 0) {
+        num_classe <- gsub("%_", "", col)
+        nome_classe <- classe_nomes[num_classe]  # Obtém nome da classe
+        if (is.na(nome_classe)) nome_classe <- paste("Classe Desconhecida (", num_classe, ")", sep = "")
+        sprintf("   - %s: %d%%", nome_classe, round(valor))
+      } else {
+        NULL
+      }
+    })
+    
+    # Remove entradas nulas
+    outras_linhas <- unlist(outras_linhas[!sapply(outras_linhas, is.null)])
+    
+    if (length(outras_linhas) == 0) {
+      outras_linhas <- "   - Nenhuma outra classe com porcentagem > 0%"
+    }
+    
+    # Obtém nome da classe predominante
+    nome_classe_pred <- classe_nomes[as.character(classe_escolhida)]
+    if (is.na(nome_classe_pred)) nome_classe_pred <- paste("Classe Desconhecida (", classe_escolhida, ")", sep = "")
+    
+    # Formata o item principal
+    item_principal <- paste0(
+      i, ". Nascente: ", linha$fid, "\n",
+      "   Propriedade(s): ", propriedades, "\n",
+      "   Classe predominante: ", nome_classe_pred, 
+      " (", round(linha[[col_classe]]), "%)\n",
+      "   Outras classes:\n"
     )
+    
+    # Combina tudo
+    lista_resultado[[i]] <- paste0(item_principal, paste(outras_linhas, collapse = "\n"))
   }
+  
   return(lista_resultado)
 }
-
 
 # --- DEFINIÇÃO DE CAMINHOS COMPLETOS ---
 file_paths <- list(
@@ -1016,14 +1069,13 @@ server <- function(input, output, session) {
     classe_numerica <- switch(input$classe_escolhida,
                               "Formação Florestal" = 3,
                               "Floresta Plantada" = 9,
-                              "Pastagem" = 11,
-                              "Mosaico de Usos" = 15,
-                              "Cultura Temporária" = 19,
-                              "Rios e Lagos" = 21,
+                              "Campo Alagado e Área Pantanosa" = 11,
+                              "Pastagem" = 15,
+                              "Lavoura Temporária" = 19,
+                              "Mosaico de Usos" = 21,
                               "Área Urbanizada" = 24,
-                              "Campo Alagado e Pantanoso" = 25,
-                              "Não Observado" = 33,
-                              NA
+                              "Outras Áreas não Vegetadas" = 25,
+                              "Rio e Lago" = 33
     )
     
     if (is.na(classe_numerica)) return(tags$p("Classe inválida."))
@@ -1032,10 +1084,10 @@ server <- function(input, output, session) {
     if (nrow(dados) == 0) return(tags$p("Dados não disponíveis."))
     
     lista <- gerar_lista_predominancia(dados, classe_numerica)
-    HTML(paste("<ul>", paste0("<li>", lista, "</li>"), "</ul>"))
+    HTML(paste0("<pre>", paste(lista, collapse = "\n\n"), "</pre>"))
   })
   
-   output$feicoes_predominantes <- renderDataTable({
+  output$feicoes_predominantes <- renderDataTable({
     datatable(data.frame(), options = list(pageLength = 5))
   })
   
