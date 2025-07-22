@@ -628,23 +628,51 @@ server <- function(input, output, session) {
     }
   })
   
-  # --- SINCRONIZAR inputs de nascente ---
+  # --- SINCRONIZAR inputs entre abas ---
+  
+  # Armazenar últimos valores válidos
+  last_valid_nasc_id <- reactiveVal(1)
+  last_valid_prop_id <- reactiveVal(1)
+  
+  # Observers para nascentes
   observeEvent(input$nascente_id_ident, {
-    updateNumericInput(session, "nascente_id", value = input$nascente_id_ident)
-    updateNumericInput(session, "id_nascente_viz", value = input$nascente_id_ident)
-  })
+    if(!is.na(input$nascente_id_ident)) {
+      last_valid_nasc_id(input$nascente_id_ident)
+      updateNumericInput(session, "nascente_id", value = input$nascente_id_ident)
+      updateNumericInput(session, "id_nascente_viz", value = input$nascente_id_ident)
+    }
+  }, ignoreInit = TRUE)
   
   observeEvent(input$nascente_id, {
-    updateNumericInput(session, "nascente_id_ident", value = input$nascente_id)
-    updateNumericInput(session, "id_nascente_viz", value = input$nascente_id)
-  })
+    if(!is.na(input$nascente_id)) {
+      last_valid_nasc_id(input$nascente_id)
+      updateNumericInput(session, "nascente_id_ident", value = input$nascente_id)
+      updateNumericInput(session, "id_nascente_viz", value = input$nascente_id)
+    }
+  }, ignoreInit = TRUE)
   
   observeEvent(input$id_nascente_viz, {
-    updateNumericInput(session, "nascente_id", value = input$id_nascente_viz)
-    updateNumericInput(session, "nascente_id_ident", value = input$id_nascente_viz)
-  })
+    if(!is.na(input$id_nascente_viz)) {
+      last_valid_nasc_id(input$id_nascente_viz)
+      updateNumericInput(session, "nascente_id", value = input$id_nascente_viz)
+      updateNumericInput(session, "nascente_id_ident", value = input$id_nascente_viz)
+    }
+  }, ignoreInit = TRUE)
   
+  # Observers para propriedades
+  observeEvent(input$prop_id, {
+    if(!is.na(input$prop_id)) {
+      last_valid_prop_id(input$prop_id)
+      updateNumericInput(session, "id_prop_viz", value = input$prop_id)
+    }
+  }, ignoreInit = TRUE)
   
+  observeEvent(input$id_prop_viz, {
+    if(!is.na(input$id_prop_viz)) {
+      last_valid_prop_id(input$id_prop_viz)
+      updateNumericInput(session, "prop_id", value = input$id_prop_viz)
+    }
+  }, ignoreInit = TRUE)  
   # Mapa principal
   output$mapa_apa <- renderLeaflet({
     if(is.null(shape_apa())) {
