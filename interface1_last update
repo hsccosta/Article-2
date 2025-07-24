@@ -684,12 +684,7 @@ server <- function(input, output, session) {
     
     bounds <- st_bbox(shape_apa())
     leaflet() %>%
-      addProviderTiles("Esri.WorldTopoMap", group = "Topográfico") %>%  # Mapa topográfico principal
-      addProviderTiles("OpenTopoMap", group = "OpenTopoMap (Alternativo)") %>%  # Opção alternativa
-      addLayersControl(
-        baseGroups = c("Topográfico", "OpenTopoMap (Alternativo)"),
-        options = layersControlOptions(collapsed = FALSE)
-      ) %>%
+      addProviderTiles("Esri.WorldTopoMap") %>%  # Mantém apenas o mapa topográfico
       fitBounds(bounds[[1]], bounds[[2]], bounds[[3]], bounds[[4]])
   })
   
