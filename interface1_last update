@@ -112,9 +112,9 @@ gerar_lista_predominancia <- function(df, classe_escolhida) {
 # --- DEFINIÇÃO DE CAMINHOS COMPLETOS ---
 file_paths <- list(
   raster_2023 = file.path(base_path, "2023.tif"),
-  shp_apa = file.path(base_path, "apa_de_campinas.shp"),
-  shp_car = file.path(base_path, "car_apa.shp"),
-  shp_nascentes = file.path(base_path, "Nascentes_50m.shp"),
+  shp_apa = file.path(base_path, "apa.shp"),
+  shp_car = file.path(base_path, "car.shp"),
+  shp_nascentes = file.path(base_path, "nascentes.shp"),
   logos = file.path(base_path, "logos_combinados.jpg"),
   qml = file.path(base_path, "brazil_col8.qml"),
   nascente_excel = file.path(base_path, "0001.xlsx"),
@@ -720,7 +720,7 @@ server <- function(input, output, session) {
         color = "#666", 
         weight = 2, 
         group = "CAR",
-        label = ~paste("Propriedade:", id_car)
+        label = ~paste("Propriedade:", fid)
       )
     }
     
@@ -831,7 +831,7 @@ server <- function(input, output, session) {
           weight = 2, 
           fillColor = "lightgray", 
           fillOpacity = 0.2,
-          label = ~paste("Propriedade:", id_car)
+          label = ~paste("Propriedade:", fid_car)
         )
       }
       
