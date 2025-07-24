@@ -470,10 +470,10 @@ ui <- fluidPage(
              sidebarLayout(
                sidebarPanel(
                  width = 3,
-                 checkboxGroupInput("camadas_visiveis", "Camadas visíveis:",
-                                    choices = c("APA de Campinas", "APA CAR", "Nascentes 50m"),
-                                    selected = c("APA de Campinas", "APA CAR", "Nascentes 50m")),
-                 textInput("ids_sel", "Destacar nascentes (FID):", placeholder = "ex: 12, 45, 321"),
+                 checkboxGroupInput("camadas_visiveis", "Camadas:",
+                                    choices = c("Nascentes", "CAR","APA de Campinas"),
+                                    selected = c("Nascentes", "CAR","APA de Campinas")),
+                 textInput("ids_sel", "Buscar por Nascente(s):", placeholder = "ex: 12, 45, 321"),
                  uiOutput("propriedades_ui"),
                  downloadButton("exportar_mapa", "Exportar Mapa (.png)", class = "btn-info")
                ),
@@ -673,25 +673,34 @@ server <- function(input, output, session) {
       updateNumericInput(session, "prop_id", value = input$id_prop_viz)
     }
   }, ignoreInit = TRUE)  
-  # Mapa principal
+  # --- Mapa Principal (Topográfico) ---
   output$mapa_apa <- renderLeaflet({
     if(is.null(shape_apa())) {
-      return(leaflet() %>% addTiles() %>% 
+      return(leaflet() %>% 
+               addProviderTiles("Esri.WorldTopoMap") %>%  # Mapa topográfico como padrão
                setView(lng = -47.06, lat = -22.90, zoom = 10) %>%
                addControl("Dados da APA não disponíveis", position = "topright"))
     }
     
     bounds <- st_bbox(shape_apa())
     leaflet() %>%
-      addProviderTiles("Esri.WorldTopoMap") %>%
+      addProviderTiles("Esri.WorldTopoMap", group = "Topográfico") %>%  # Mapa topográfico principal
+      addProviderTiles("OpenTopoMap", group = "OpenTopoMap (Alternativo)") %>%  # Opção alternativa
+      addLayersControl(
+        baseGroups = c("Topográfico", "OpenTopoMap (Alternativo)"),
+        options = layersControlOptions(collapsed = FALSE)
+      ) %>%
       fitBounds(bounds[[1]], bounds[[2]], bounds[[3]], bounds[[4]])
   })
   
-  # Atualizações do mapa
+  # --- Atualizações do Mapa ---
   observe({
     proxy <- leafletProxy("mapa_apa")
     proxy %>% clearGroup(c("APA de Campinas", "APA CAR", "Nascentes 50m", "Destacado", "Marcadores"))
     
+    # Mantém o mapa topográfico base (não precisa re-adicionar os tiles aqui)
+    
+    # Restante do observe original (não alterado)...
     if ("APA de Campinas" %in% input$camadas_visiveis && !is.null(shape_apa())) {
       proxy %>% addPolygons(
         data = shape_apa(), 
@@ -703,25 +712,25 @@ server <- function(input, output, session) {
       )
     }
     
-    if ("APA CAR" %in% input$camadas_visiveis && !is.null(shape_car())) {
+    if ("CAR" %in% input$camadas_visiveis && !is.null(shape_car())) {
       proxy %>% addPolygons(
         data = shape_car(), 
         fillColor = "lightgray", 
         fillOpacity = 0.2, 
         color = "#666", 
         weight = 2, 
-        group = "APA CAR",
+        group = "CAR",
         label = ~paste("Propriedade:", id_car)
       )
     }
     
-    if ("Nascentes 50m" %in% input$camadas_visiveis && !is.null(shape_nascentes())) {
+    if ("Nascentes" %in% input$camadas_visiveis && !is.null(shape_nascentes())) {
       proxy %>% addPolygons(
         data = shape_nascentes(), 
         fillColor = "transparent", 
         color = "black", 
         weight = 1, 
-        group = "Nascentes 50m",
+        group = "Nascentes",
         label = ~paste("Nascente FID:", fid)
       )
     }
@@ -815,7 +824,7 @@ server <- function(input, output, session) {
         )
       }
       
-      if ("APA CAR" %in% input$camadas_visiveis && !is.null(shape_car())) {
+      if ("CAR" %in% input$camadas_visiveis && !is.null(shape_car())) {
         map <- map %>% addPolygons(
           data = shape_car(), 
           color = "#666", 
@@ -826,7 +835,7 @@ server <- function(input, output, session) {
         )
       }
       
-      if ("Nascentes 50m" %in% input$camadas_visiveis && !is.null(shape_nascentes())) {
+      if ("Nascentes" %in% input$camadas_visiveis && !is.null(shape_nascentes())) {
         map <- map %>% addPolygons(
           data = shape_nascentes(), 
           color = "black", 
