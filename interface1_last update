@@ -471,8 +471,8 @@ ui <- fluidPage(
                sidebarPanel(
                  width = 3,
                  checkboxGroupInput("camadas_visiveis", "Camadas:",
-                                    choices = c("Nascentes", "CAR","APA de Campinas"),
-                                    selected = c("Nascentes", "CAR","APA de Campinas")),
+                                    choices = c("Nascentes", "CAR", "APA de Campinas"),
+                                    selected = c("Nascentes", "CAR", "APA de Campinas")),
                  textInput("ids_sel", "Buscar por Nascente(s):", placeholder = "ex: 12, 45, 321"),
                  uiOutput("propriedades_ui"),
                  downloadButton("exportar_mapa", "Exportar Mapa (.png)", class = "btn-info")
@@ -677,25 +677,25 @@ server <- function(input, output, session) {
   output$mapa_apa <- renderLeaflet({
     if(is.null(shape_apa())) {
       return(leaflet() %>% 
-               addProviderTiles("Esri.WorldTopoMap") %>%  # Mapa topográfico como padrão
-               setView(lng = -47.06, lat = -22.90, zoom = 10) %>%
+               addProviderTiles("Esri.WorldTopoMap") %>%
+               setView(lng = -47.06, lat = -22.90, zoom = 11) %>%  # Aumentei o zoom para 11
                addControl("Dados da APA não disponíveis", position = "topright"))
     }
     
     bounds <- st_bbox(shape_apa())
+    center <- c(mean(bounds[c(1,3)]), mean(bounds[c(2,4)]))
+    
     leaflet() %>%
-      addProviderTiles("Esri.WorldTopoMap") %>%  # Mantém apenas o mapa topográfico
-      fitBounds(bounds[[1]], bounds[[2]], bounds[[3]], bounds[[4]])
+      addProviderTiles("Esri.WorldTopoMap") %>%
+      fitBounds(bounds[[1]], bounds[[2]], bounds[[3]], bounds[[4]]) %>%
+      setView(lng = center[1], lat = center[2], zoom = 11)  # Zoom inicial aumentado
   })
   
   # --- Atualizações do Mapa ---
   observe({
     proxy <- leafletProxy("mapa_apa")
-    proxy %>% clearGroup(c("APA de Campinas", "APA CAR", "Nascentes 50m", "Destacado", "Marcadores"))
+    proxy %>% clearGroup(c("APA de Campinas", "CAR", "Nascentes", "Destacado", "Marcadores"))
     
-    # Mantém o mapa topográfico base (não precisa re-adicionar os tiles aqui)
-    
-    # Restante do observe original (não alterado)...
     if ("APA de Campinas" %in% input$camadas_visiveis && !is.null(shape_apa())) {
       proxy %>% addPolygons(
         data = shape_apa(), 
@@ -735,12 +735,12 @@ server <- function(input, output, session) {
       feicoes <- shape_nascentes()[shape_nascentes()$fid %in% ids, ]
       
       if (nrow(feicoes) > 0) {
+        # Calcula o bounding box das feições selecionadas
         bbox <- st_bbox(feicoes)
-        bbox_exp <- bbox + c(-0.3*(bbox[3]-bbox[1]), -0.3*(bbox[4]-bbox[2]),
-                             0.3*(bbox[3]-bbox[1]), 0.3*(bbox[4]-bbox[2]))
         
         proxy %>% 
-          fitBounds(bbox_exp[1], bbox_exp[2], bbox_exp[3], bbox_exp[4]) %>%
+          flyToBounds(bbox[[1]], bbox[[2]], bbox[[3]], bbox[[4]], 
+                      options = list(padding = c(50, 50), duration = 1)) %>%
           addPolygons(
             data = feicoes, 
             group = "Destacado",
