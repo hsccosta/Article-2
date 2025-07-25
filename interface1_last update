@@ -486,6 +486,9 @@ ui <- fluidPage(
     tabPanel("Identificação",
              sidebarLayout(
                sidebarPanel(
+                 numericInput("prop_id_ident", "ID da Propriedade (CAR) (1 - 675):", 
+                              value = NA, min = 1, max = 675),
+                 uiOutput("nascentes_for_prop_ident"),
                  numericInput("nascente_id_ident", "ID da Nascente (1 - 1326):", 
                               value = 1, min = 1, max = 1326),
                  uiOutput("props_for_nascente_ident"),
@@ -586,7 +589,7 @@ server <- function(input, output, session) {
     if(!is.null(dados)) {
       updateTextInput(session, "nome_nascente", value = dados$Nome_Nascente)
       updateTextInput(session, "responsavel", value = dados$Responsavel)
-      updateTextInput(session, "patrono", value = dados$Patrono)
+      updateTextInput(session, "apoiador", value = dados$Apoiador)
       updateSelectInput(session, "cercada", selected = dados$Cercada)
       updateTextAreaInput(session, "descricao", value = dados$Descricao)
       updateTextAreaInput(session, "oportunidades", value = dados$Oportunidades)
@@ -594,7 +597,7 @@ server <- function(input, output, session) {
     } else {
       updateTextInput(session, "nome_nascente", value = "")
       updateTextInput(session, "responsavel", value = "")
-      updateTextInput(session, "patrono", value = "")
+      updateTextInput(session, "apoiador", value = "")
       updateSelectInput(session, "cercada", selected = "Não")
       updateTextAreaInput(session, "descricao", value = "")
       updateTextAreaInput(session, "oportunidades", value = "")
@@ -602,37 +605,10 @@ server <- function(input, output, session) {
     }
   })
   
-  # Atualiza os inputs numéricos com os limites corretos
-  observe({
-    dados <- df()
-    if(nrow(dados) > 0) {
-      updateNumericInput(session, "nascente_id_ident", 
-                         min = min(dados$fid, na.rm = TRUE),
-                         max = max(dados$fid, na.rm = TRUE))
-      
-      updateNumericInput(session, "nascente_id", 
-                         min = min(dados$fid, na.rm = TRUE),
-                         max = max(dados$fid, na.rm = TRUE))
-      
-      updateNumericInput(session, "prop_id", 
-                         min = min(dados$fid_car, na.rm = TRUE),
-                         max = max(dados$fid_car, na.rm = TRUE))
-      
-      updateNumericInput(session, "id_nascente_viz", 
-                         min = min(dados$fid, na.rm = TRUE),
-                         max = max(dados$fid, na.rm = TRUE))
-      
-      updateNumericInput(session, "id_prop_viz", 
-                         min = min(dados$fid_car, na.rm = TRUE),
-                         max = max(dados$fid_car, na.rm = TRUE))
-    }
-  })
-  
-  # --- SINCRONIZAR inputs entre abas ---
-  
   # Armazenar últimos valores válidos
   last_valid_nasc_id <- reactiveVal(1)
   last_valid_prop_id <- reactiveVal(1)
+  last_valid_prop_id_ident <- reactiveVal(1)
   
   # Observers para nascentes
   observeEvent(input$nascente_id_ident, {
@@ -660,25 +636,133 @@ server <- function(input, output, session) {
   }, ignoreInit = TRUE)
   
   # Observers para propriedades
+  observeEvent(input$prop_id_ident, {
+    if(!is.na(input$prop_id_ident)) {
+      last_valid_prop_id_ident(input$prop_id_ident)
+      updateNumericInput(session, "prop_id", value = input$prop_id_ident)
+      updateNumericInput(session, "id_prop_viz", value = input$prop_id_ident)
+      
+      # Atualiza o mapa para destacar a propriedade
+      proxy <- leafletProxy("mapa_apa")
+      proxy %>% clearGroup("Propriedade Destacada")
+      
+      if(!is.null(shape_car())) {
+        propriedade <- shape_car()[shape_car()$fid == input$prop_id_ident, ]
+        if(nrow(propriedade) > 0) {
+          proxy %>% addPolygons(
+            data = propriedade,
+            group = "Propriedade Destacada",
+            fillColor = "yellow",
+            fillOpacity = 0.7,
+            color = "black",
+            weight = 2,
+            highlightOptions = highlightOptions(
+              weight = 3,
+              color = "#666",
+              fillOpacity = 0.9,
+              bringToFront = TRUE
+            )
+          ) %>% 
+            flyToBounds(
+              lng1 = st_bbox(propriedade)[["xmin"]],
+              lat1 = st_bbox(propriedade)[["ymin"]],
+              lng2 = st_bbox(propriedade)[["xmax"]],
+              lat2 = st_bbox(propriedade)[["ymax"]]
+            )
+        }
+      }
+    }
+  }, ignoreInit = TRUE)
+  
   observeEvent(input$prop_id, {
     if(!is.na(input$prop_id)) {
-      last_valid_prop_id(input$prop_id)
-      updateNumericInput(session, "id_prop_viz", value = input$prop_id)
+      updateNumericInput(session, "prop_id_ident", value = input$prop_id)
     }
   }, ignoreInit = TRUE)
   
   observeEvent(input$id_prop_viz, {
     if(!is.na(input$id_prop_viz)) {
-      last_valid_prop_id(input$id_prop_viz)
-      updateNumericInput(session, "prop_id", value = input$id_prop_viz)
+      updateNumericInput(session, "prop_id_ident", value = input$id_prop_viz)
     }
-  }, ignoreInit = TRUE)  
+  }, ignoreInit = TRUE)
+  
+  # Atualiza os inputs numéricos com os limites corretos
+  observe({
+    dados <- df()
+    if(nrow(dados) > 0) {
+      updateNumericInput(session, "nascente_id_ident", 
+                         min = min(dados$fid, na.rm = TRUE),
+                         max = max(dados$fid, na.rm = TRUE))
+      
+      updateNumericInput(session, "nascente_id", 
+                         min = min(dados$fid, na.rm = TRUE),
+                         max = max(dados$fid, na.rm = TRUE))
+      
+      updateNumericInput(session, "prop_id", 
+                         min = min(dados$fid_car, na.rm = TRUE),
+                         max = max(dados$fid_car, na.rm = TRUE))
+      
+      updateNumericInput(session, "prop_id_ident", 
+                         min = min(dados$fid_car, na.rm = TRUE),
+                         max = max(dados$fid_car, na.rm = TRUE))
+      
+      updateNumericInput(session, "id_nascente_viz", 
+                         min = min(dados$fid, na.rm = TRUE),
+                         max = max(dados$fid, na.rm = TRUE))
+      
+      updateNumericInput(session, "id_prop_viz", 
+                         min = min(dados$fid_car, na.rm = TRUE),
+                         max = max(dados$fid_car, na.rm = TRUE))
+    }
+  })
+  
+  # Output para listar nascentes da propriedade selecionada
+  output$nascentes_for_prop_ident <- renderUI({
+    req(input$prop_id_ident)
+    dados <- df()
+    if(nrow(dados) == 0) return(tags$p("Dados não disponíveis."))
+    
+    nasc_ids <- dados %>% 
+      filter(fid_car == input$prop_id_ident) %>% 
+      pull(fid) %>% 
+      unique()
+    
+    if(length(nasc_ids) == 0) return(tags$p("Nenhuma nascente encontrada para esta propriedade."))
+    
+    tagList(
+      tags$p(
+        class = "label-prop-nasc", 
+        HTML(paste0(
+          "<strong>Nascente(s) na Propriedade:</strong><br>",
+          "<div style='max-height: 100px; overflow-y: auto;'>",
+          paste(nasc_ids, collapse = ", "),
+          "</div>"
+        ))
+      ),
+      actionButton("selecionar_todas_nascentes", "Selecionar todas as nascentes",
+                   class = "btn-sm btn-primary")
+    )
+  })
+  
+  # Observer para o botão de selecionar todas as nascentes
+  observeEvent(input$selecionar_todas_nascentes, {
+    dados <- df()
+    nasc_ids <- dados %>% 
+      filter(fid_car == input$prop_id_ident) %>% 
+      pull(fid) %>% 
+      unique()
+    
+    if(length(nasc_ids) > 0) {
+      updateTextInput(session, "ids_sel", value = paste(nasc_ids, collapse = ", "))
+    }
+  })
+  
   # --- Mapa Principal (Topográfico) ---
   output$mapa_apa <- renderLeaflet({
     if(is.null(shape_apa())) {
       return(leaflet() %>% 
                addProviderTiles("Esri.WorldTopoMap") %>%
-               setView(lng = -47.06, lat = -22.90, zoom = 11.5) %>%  # Aumentei o zoom para 11.5
+               setView(lng = -47.06, lat = -22.90, zoom = 11.8) %>%  # Aumentei o zoom para 11.8
                addControl("Dados da APA não disponíveis", position = "topright"))
     }
     
@@ -688,13 +772,13 @@ server <- function(input, output, session) {
     leaflet() %>%
       addProviderTiles("Esri.WorldTopoMap") %>%
       fitBounds(bounds[[1]], bounds[[2]], bounds[[3]], bounds[[4]]) %>%
-      setView(lng = center[1], lat = center[2], zoom = 11.8)  # Zoom inicial aumentado
+      setView(lng = center[1], lat = center[2], zoom = 11.2)  # Zoom inicial aumentado
   })
   
   # --- Atualizações do Mapa ---
   observe({
     proxy <- leafletProxy("mapa_apa")
-    proxy %>% clearGroup(c("APA de Campinas", "CAR", "Nascentes", "Destacado", "Marcadores"))
+    proxy %>% clearGroup(c("APA de Campinas", "CAR", "Nascentes", "Destacado", "Marcadores", "Propriedade Destacada"))
     
     if ("APA de Campinas" %in% input$camadas_visiveis && !is.null(shape_apa())) {
       proxy %>% addPolygons(
@@ -788,6 +872,27 @@ server <- function(input, output, session) {
             group = "Marcadores"
           )
         }
+      }
+    }
+    
+    # Destacar propriedade selecionada na aba identificação
+    if(!is.null(input$prop_id_ident) && !is.na(input$prop_id_ident) && !is.null(shape_car())) {
+      propriedade <- shape_car()[shape_car()$fid == input$prop_id_ident, ]
+      if(nrow(propriedade) > 0) {
+        proxy %>% addPolygons(
+          data = propriedade,
+          group = "Propriedade Destacada",
+          fillColor = "yellow",
+          fillOpacity = 0.7,
+          color = "black",
+          weight = 2,
+          highlightOptions = highlightOptions(
+            weight = 3,
+            color = "#666",
+            fillOpacity = 0.9,
+            bringToFront = TRUE
+          )
+        )
       }
     }
   })
@@ -891,6 +996,26 @@ server <- function(input, output, session) {
         }
       }
       
+      # Adiciona propriedade destacada se houver
+      if(!is.null(input$prop_id_ident) && !is.na(input$prop_id_ident) && !is.null(shape_car())) {
+        propriedade <- shape_car()[shape_car()$fid == input$prop_id_ident, ]
+        if(nrow(propriedade) > 0) {
+          map <- map %>% addPolygons(
+            data = propriedade,
+            fillColor = "yellow",
+            fillOpacity = 0.7,
+            color = "black",
+            weight = 2,
+            highlightOptions = highlightOptions(
+              weight = 3,
+              color = "#666",
+              fillOpacity = 0.9,
+              bringToFront = TRUE
+            )
+          )
+        }
+      }
+      
       mapshot(map, file = file)
       removeNotification("export-notif")
     }
@@ -955,7 +1080,9 @@ server <- function(input, output, session) {
       class = "label-prop-nasc", 
       HTML(paste0(
         "<strong>Nascente(s) na Propriedade:</strong><br>",
-        "<span style='color: #5a7ca9;'>", paste(nasc_ids, collapse = ", "), "</span>"
+        "<div style='max-height: 100px; overflow-y: auto;'>",
+        paste(nasc_ids, collapse = ", "),
+        "</div>"
       ))
     )
   })
@@ -1039,7 +1166,7 @@ server <- function(input, output, session) {
       ID_Nascente = input$nascente_id_ident,
       Nome_Nascente = input$nome_nascente,
       Responsavel = input$responsavel,
-      Patrono = input$patrono,
+      Apoiador = input$apoiador,
       Cercada = input$cercada,
       Descricao = input$descricao,
       Oportunidades = input$oportunidades,
