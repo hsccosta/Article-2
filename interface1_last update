@@ -678,7 +678,7 @@ server <- function(input, output, session) {
     if(is.null(shape_apa())) {
       return(leaflet() %>% 
                addProviderTiles("Esri.WorldTopoMap") %>%
-               setView(lng = -47.06, lat = -22.90, zoom = 11) %>%  # Aumentei o zoom para 11
+               setView(lng = -47.06, lat = -22.90, zoom = 11.5) %>%  # Aumentei o zoom para 11.5
                addControl("Dados da APA não disponíveis", position = "topright"))
     }
     
@@ -688,7 +688,7 @@ server <- function(input, output, session) {
     leaflet() %>%
       addProviderTiles("Esri.WorldTopoMap") %>%
       fitBounds(bounds[[1]], bounds[[2]], bounds[[3]], bounds[[4]]) %>%
-      setView(lng = center[1], lat = center[2], zoom = 11)  # Zoom inicial aumentado
+      setView(lng = center[1], lat = center[2], zoom = 11.8)  # Zoom inicial aumentado
   })
   
   # --- Atualizações do Mapa ---
@@ -735,11 +735,22 @@ server <- function(input, output, session) {
       feicoes <- shape_nascentes()[shape_nascentes()$fid %in% ids, ]
       
       if (nrow(feicoes) > 0) {
-        # Calcula o bounding box das feições selecionadas
         bbox <- st_bbox(feicoes)
         
+        # Calcula 40% do tamanho original do bounding box (zoom mais próximo)
+        width <- bbox[3] - bbox[1]
+        height <- bbox[4] - bbox[2]
+        
+        # Reduz o tamanho do bounding box em 40%
+        bbox_zoom <- bbox + c(
+          width * 0.2,  # Aumenta o limite esquerdo (20% de cada lado = 40% total)
+          height * 0.2, # Aumenta o limite inferior
+          -width * 0.2, # Diminui o limite direito
+          -height * 0.2 # Diminui o limite superior
+        )
+        
         proxy %>% 
-          flyToBounds(bbox[[1]], bbox[[2]], bbox[[3]], bbox[[4]], 
+          flyToBounds(bbox_zoom[[1]], bbox_zoom[[2]], bbox_zoom[[3]], bbox_zoom[[4]], 
                       options = list(padding = c(50, 50), duration = 1)) %>%
           addPolygons(
             data = feicoes, 
@@ -1128,7 +1139,7 @@ server <- function(input, output, session) {
   })
   
   output$mapa_classe <- renderLeaflet({
-    leaflet() %>% addTiles() %>% setView(lng = -47.06, lat = -22.90, zoom = 10)
+    leaflet() %>% addTiles() %>% setView(lng = -47.06, lat = -22.90, zoom = 11.5)
   })
   
   output$plot_raster_viz <- renderPlot({
