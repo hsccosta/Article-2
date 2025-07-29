@@ -287,6 +287,19 @@ render_image_helper <- function(nasc_id_val) {
 ui <- fluidPage(
   tags$head(
     tags$style(HTML("
+  /* Cor do texto dos títulos das abas */
+  .nav-tabs>li>a {
+    color: #42a5f5 !important;  /* Azul similar ao usado no título principal */
+  }
+  
+  /* Cor do texto da aba ativa */
+  .nav-tabs>li.active>a {
+    color: #333 !important;      /* Cor mais escura para a aba ativa */
+    font-weight: bold;
+  }
+")),
+
+    tags$style(HTML("
       body, .form-control, .selectize-input, .leaflet-popup-content,
       .shiny-output-error-validation, .shiny-output-error,
       h1, h2, h3, h4, h5, h6, label, .leaflet-control, .dataTables_wrapper {
