@@ -295,6 +295,14 @@ ui <- fluidPage(
       .titulo-principal {
         font-size: 168% !important;
       }
+      .parte-cinza {
+      color: black !important;
+    }
+    .parte-preta {
+      color: #42a5f5 !important;
+    }
+  ))
+  ),
       .titulo-legenda {
         font-size: 98% !important;
         font-weight: bold !important;
@@ -398,7 +406,7 @@ ui <- fluidPage(
   
   tags$h2(
     class = "titulo-principal",
-    HTML("Observatório das Mudanças de Uso e Cobertura da Terra em Áreas de Nascentes v.1.0<br>Local: APA de Campinas")
+    HTML("<span class='parte-preta'>Observatório das <span class='parte-cinza'>Mudanças de Uso e Cobertura da Terra em Áreas de </span><span class='parte-preta'>Nascentes <span class='parte-cinza'>v.1.0 <br><span class='parte-cinza'>Local: APA de Campinas</span>")
   ),
   
   tabsetPanel(
