@@ -406,7 +406,7 @@ ui <- fluidPage(
   
   tags$h2(
     class = "titulo-principal",
-    HTML("<span class='parte-preta'>Observatório das <span class='parte-cinza'>Mudanças de Uso e Cobertura da Terra em Áreas de </span><span class='parte-preta'>Nascentes <span class='parte-cinza'>v.1.0 <br><span class='parte-cinza'>Local: APA de Campinas</span>")
+    HTML("<span class='parte-preta'>Observatório das <span class='parte-cinza'>Mudanças de Uso e Cobertura da Terra em Áreas de </span><br><span class='parte-preta'>Nascentes <span class='parte-cinza'>v.1.0   <span class='parte-cinza'> - APA de Campinas</span>")
   ),
   
   tabsetPanel(
