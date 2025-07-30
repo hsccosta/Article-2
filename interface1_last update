@@ -298,7 +298,7 @@ ui <- fluidPage(
     font-weight: bold;
   }
 ")),
-
+    
     tags$style(HTML("
       body, .form-control, .selectize-input, .leaflet-popup-content,
       .shiny-output-error-validation, .shiny-output-error,
