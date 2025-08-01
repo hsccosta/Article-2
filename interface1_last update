@@ -109,6 +109,83 @@ gerar_lista_predominancia <- function(df, classe_escolhida) {
   return(lista_resultado)
 }
 
+# Função para gerar lista de transições
+gerar_lista_transicoes <- function(df, tipo_transicao) {
+  # Mapeamento de classes
+  classe_nomes <- c(
+    "3" = "Formação Florestal",
+    "9" = "Floresta Plantada",
+    "11" = "Campo Alagado e Área Pantanosa",
+    "15" = "Pastagem",
+    "19" = "Lavoura Temporária",
+    "21" = "Mosaico de Usos",
+    "24" = "Área Urbanizada",
+    "25" = "Outras Áreas não Vegetadas",
+    "33" = "Rio e Lago"
+  )
+  
+  # Determina coluna de ordenação baseada no tipo de transição
+  coluna_ordenacao <- switch(tipo_transicao,
+                             "Formação Florestal Mantida" = "t1",
+                             "Formação Florestal Perdida" = "t2",
+                             "Sem Transição Relevante" = "t4",
+                             "Regeneração de Formação Florestal" = "t5",
+                             "Aumento de Superfície de Água" = "t6"
+  )
+  
+  if (is.null(coluna_ordenacao)) {
+    return(list("Tipo de transição inválido"))
+  }
+  
+  # Filtra e ordena os dados
+  df_filtrado <- df[order(-df[[coluna_ordenacao]]), ]
+  
+  lista_resultado <- vector("list", min(50, nrow(df_filtrado))) # Limita a 50 itens
+  
+  for (i in seq_along(lista_resultado)) {
+    linha <- df_filtrado[i, ]
+    
+    # Remove "CAR" dos códigos de propriedade
+    propriedades <- gsub("CAR", "", as.character(linha$cod_imovel))
+    
+    # Formata o item principal
+    item_principal <- paste0(
+      i, ". Nascente: ", linha$fid, "\n",
+      "   Propriedade(s): ", propriedades, "\n",
+      "   Valor de Transição: ", round(linha[[coluna_ordenacao]], 2), "\n",
+      "   Detalhes:\n"
+    )
+    
+    # Adiciona informações específicas do tipo de transição
+    detalhes <- switch(tipo_transicao,
+                       "Formação Florestal Mantida" = paste0(
+                         "   - Área mantida como Formação Florestal: ", round(linha$t1, 2), " ha\n",
+                         "   - Porcentagem da área total: ", round(linha$t1/linha$area_total*100, 1), "%"
+                       ),
+                       "Formação Florestal Perdida" = paste0(
+                         "   - Área perdida de Formação Florestal: ", round(linha$t2, 2), " ha\n",
+                         "   - Porcentagem da área total: ", round(linha$t2/linha$area_total*100, 1), "%"
+                       ),
+                       "Sem Transição Relevante" = paste0(
+                         "   - Área sem transição relevante: ", round(linha$t4, 2), " ha\n",
+                         "   - Porcentagem da área total: ", round(linha$t4/linha$area_total*100, 1), "%"
+                       ),
+                       "Regeneração de Formação Florestal" = paste0(
+                         "   - Área regenerada para Formação Florestal: ", round(linha$t5, 2), " ha\n",
+                         "   - Porcentagem da área total: ", round(linha$t5/linha$area_total*100, 1), "%"
+                       ),
+                       "Aumento de Superfície de Água" = paste0(
+                         "   - Área com aumento de superfície de água: ", round(linha$t6, 2), " ha\n",
+                         "   - Porcentagem da área total: ", round(linha$t6/linha$area_total*100, 1), "%"
+                       )
+    )
+    
+    lista_resultado[[i]] <- paste0(item_principal, detalhes)
+  }
+  
+  return(lista_resultado)
+}
+
 # --- DEFINIÇÃO DE CAMINHOS COMPLETOS ---
 file_paths <- list(
   raster_2023 = file.path(base_path, "2023.tif"),
@@ -475,15 +552,18 @@ ui <- fluidPage(
     tabPanel("Transições 2022-2023",
              sidebarLayout(
                sidebarPanel(
-                 numericInput("id_nascente_viz", "ID da Nascente (1 - 1326):", 
-                              value = NA, min = 1, max = 1326),
-                 numericInput("id_prop_viz", "ID da Propriedade (CAR) (1 - 675):", 
-                              value = NA, min = 1, max = 675),
-                 uiOutput("info_cross_viz"),
-                 tags$hr(), 
-                 legenda_lulc()
+                 selectInput("tipo_transicao", "Tipo de Transição:",
+                             choices = c("Formação Florestal Mantida",
+                                         "Formação Florestal Perdida",
+                                         "Sem Transição Relevante",
+                                         "Regeneração de Formação Florestal",
+                                         "Aumento de Superfície de Água"),
+                             selected = "Formação Florestal Mantida")
                ),
-               mainPanel()
+               mainPanel(
+                 tags$h4("Nascentes com Transição Selecionada"),
+                 uiOutput("resultado_transicoes")
+               )
              )
     ),
     
@@ -636,7 +716,6 @@ server <- function(input, output, session) {
     if(!is.na(input$nascente_id_ident)) {
       last_valid_nasc_id(input$nascente_id_ident)
       updateNumericInput(session, "nascente_id", value = input$nascente_id_ident)
-      updateNumericInput(session, "id_nascente_viz", value = input$nascente_id_ident)
     }
   }, ignoreInit = TRUE)
   
@@ -644,15 +723,6 @@ server <- function(input, output, session) {
     if(!is.na(input$nascente_id)) {
       last_valid_nasc_id(input$nascente_id)
       updateNumericInput(session, "nascente_id_ident", value = input$nascente_id)
-      updateNumericInput(session, "id_nascente_viz", value = input$nascente_id)
-    }
-  }, ignoreInit = TRUE)
-  
-  observeEvent(input$id_nascente_viz, {
-    if(!is.na(input$id_nascente_viz)) {
-      last_valid_nasc_id(input$id_nascente_viz)
-      updateNumericInput(session, "nascente_id", value = input$id_nascente_viz)
-      updateNumericInput(session, "nascente_id_ident", value = input$id_nascente_viz)
     }
   }, ignoreInit = TRUE)
   
@@ -661,7 +731,6 @@ server <- function(input, output, session) {
     if(!is.na(input$prop_id_ident)) {
       last_valid_prop_id_ident(input$prop_id_ident)
       updateNumericInput(session, "prop_id", value = input$prop_id_ident)
-      updateNumericInput(session, "id_prop_viz", value = input$prop_id_ident)
       
       # Atualiza o mapa para destacar a propriedade
       proxy <- leafletProxy("mapa_apa")
@@ -701,12 +770,6 @@ server <- function(input, output, session) {
     }
   }, ignoreInit = TRUE)
   
-  observeEvent(input$id_prop_viz, {
-    if(!is.na(input$id_prop_viz)) {
-      updateNumericInput(session, "prop_id_ident", value = input$id_prop_viz)
-    }
-  }, ignoreInit = TRUE)
-  
   # Atualiza os inputs numéricos com os limites corretos
   observe({
     dados <- df()
@@ -724,14 +787,6 @@ server <- function(input, output, session) {
                          max = max(dados$fid_car, na.rm = TRUE))
       
       updateNumericInput(session, "prop_id_ident", 
-                         min = min(dados$fid_car, na.rm = TRUE),
-                         max = max(dados$fid_car, na.rm = TRUE))
-      
-      updateNumericInput(session, "id_nascente_viz", 
-                         min = min(dados$fid, na.rm = TRUE),
-                         max = max(dados$fid, na.rm = TRUE))
-      
-      updateNumericInput(session, "id_prop_viz", 
                          min = min(dados$fid_car, na.rm = TRUE),
                          max = max(dados$fid_car, na.rm = TRUE))
     }
@@ -1253,7 +1308,18 @@ server <- function(input, output, session) {
     })
   })
   
-  # Outputs adicionais
+  # Output para transições
+  output$resultado_transicoes <- renderUI({
+    req(input$tipo_transicao)
+    
+    dados <- df()
+    if (nrow(dados) == 0) return(tags$p("Dados não disponíveis."))
+    
+    lista <- gerar_lista_transicoes(dados, input$tipo_transicao)
+    HTML(paste0("<pre>", paste(lista, collapse = "\n\n"), "</pre>"))
+  })
+  
+  # Output para classe predominante
   output$resultado_classe <- renderUI({
     req(input$classe_escolhida)
     
@@ -1278,6 +1344,7 @@ server <- function(input, output, session) {
     HTML(paste0("<pre>", paste(lista, collapse = "\n\n"), "</pre>"))
   })
   
+  # Outputs adicionais
   output$feicoes_predominantes <- renderDataTable({
     datatable(data.frame(), options = list(pageLength = 5))
   })
@@ -1293,10 +1360,6 @@ server <- function(input, output, session) {
   output$plot_raster_viz <- renderPlot({
     plot(1,1, type = "n", xlab = "", ylab = "", axes = FALSE)
     text(1,1, "Visualização do raster aqui", cex = 1.5)
-  })
-  
-  output$info_cross_viz <- renderUI({
-    tags$p("Informações sobre a nascente/propriedade selecionada")
   })
 }
 
