@@ -1,0 +1,140 @@
+library(terra)
+library(png)
+
+# Definir caminhos das pastas
+input_dir <- "C:/Users/DELL/Desktop/Artigo 2_TC/Arquivos ArcGis/LULC_GDEs_50m/Interface_Observatório das Nascentes/transição/transição_2018-2023"
+output_dir <- "C:/Users/DELL/Desktop/Artigo 2_TC/Arquivos ArcGis/LULC_GDEs_50m/Interface_Observatório das Nascentes/transição/transição_2018-2023/PNG_Saida"
+
+# Criar pasta de saída se não existir
+if (!dir.exists(output_dir)) {
+  dir.create(output_dir, recursive = TRUE)
+}
+
+# Definir cores para cada classe
+color_map <- c(
+  "1" = "#1f8d49", # Classe 1: Verde escuro
+  "2" = "#ff0000", # Classe 2: Vermelho
+  "3" = "#00000000", # Classe 3: Transparente
+  "4" = "#06ff00", # Classe 4: Verde claro
+  "5" = "#4169e1", # Classe 5: Azul
+  "0" = "#00000000", # Tratar 0 como transparente
+  "NA" = "#00000000" # Tratar NA como transparente
+)
+
+# Listar arquivos TIFF na pasta de entrada
+tiff_files <- list.files(input_dir, pattern = "\\.tif$", full.names = TRUE)
+
+# Verificar se há arquivos TIFF
+if (length(tiff_files) == 0) {
+  stop("Nenhum arquivo TIFF encontrado na pasta de entrada: ", input_dir)
+}
+if (length(tiff_files) > 1326) {
+  warning("Mais de 1326 arquivos TIFF encontrados. Apenas os primeiros 1326 serão processados.")
+  tiff_files <- tiff_files[1:1326]
+}
+if (length(tiff_files) < 1326) {
+  warning("Menos de 1326 arquivos TIFF encontrados (", length(tiff_files), "). Arquivos serão nomeados até ", sprintf("%04dt.png", length(tiff_files)))
+}
+
+# Contador para nomenclatura sequencial
+output_counter <- 1
+
+# Processar cada arquivo TIFF
+for (i in seq_along(tiff_files)) {
+  cat("Processando arquivo:", tiff_files[i], "\n")
+  
+  temp_png <- NULL
+  
+  tryCatch({
+    raster <- rast(tiff_files[i])
+    
+    if (nlyr(raster) > 1) {
+      warning("Arquivo ", basename(tiff_files[i]), " possui múltiplas bandas (", nlyr(raster), "). Usando apenas a primeira banda.")
+      raster <- raster[[1]]
+    }
+    
+    # Mapear os valores do raster para as cores desejadas
+    raster_values <- values(raster)
+    raster_values_char <- as.character(raster_values)
+    raster_values_char[is.na(raster_values_char)] <- "NA"
+    raster_values_char[raster_values_char == ""] <- "NA"
+    
+    unique_values <- unique(raster_values_char)
+    cat("Valores únicos no raster:", unique_values, "\n")
+    
+    # Adicionar valores não mapeados ao color_map como transparentes
+    unmapped_values <- unique_values[!unique_values %in% names(color_map)]
+    if (length(unmapped_values) > 0) {
+      warning("Arquivo ", basename(tiff_files[i]), " contém valores não mapeados: ",
+              paste(unmapped_values, collapse = ", "), ". Serão tratados como transparentes.")
+      for (val in unmapped_values) {
+        color_map[val] <- "#00000000"
+      }
+    }
+    
+    # Criar a tabela de cores corretamente para a plotagem
+    valid_numeric_values <- as.numeric(names(color_map)[!names(color_map) %in% c("NA")])
+    valid_colors <- color_map[!names(color_map) %in% c("NA")]
+    
+    # Converte o raster para fator para usar a tabela de cores
+    raster_numeric <- raster
+    raster_numeric[is.na(raster_numeric)] <- 0
+    raster_numeric[is.nan(raster_numeric)] <- 0
+    raster_fator <- as.factor(raster_numeric)
+    
+    # Atribui a tabela de cores ao raster fator
+    coltab_df <- data.frame(
+      value = valid_numeric_values,
+      color = valid_colors
+    )
+    coltab(raster_fator) <- coltab_df
+    
+    # Criar dispositivo gráfico temporário
+    temp_png <- tempfile(fileext = ".png")
+    png(temp_png, width = ncol(raster), height = nrow(raster), bg = "transparent")
+    
+    # Plotar o raster
+    par(mar = c(0, 0, 0, 0))
+    plot(raster_fator, legend = FALSE, axes = FALSE, type = "classes")
+    
+    # **ABORDAGEM CORRIGIDA PARA O CÍRCULO:**
+    # 1. Definir o centro e o raio do círculo nas coordenadas do raster
+    centro_x <- (xmax(raster) + xmin(raster)) / 2
+    centro_y <- (ymax(raster) + ymin(raster)) / 2
+    raio <- min( (xmax(raster) - xmin(raster)) / 2, (ymax(raster) - ymin(raster)) / 2 )
+    
+    # 2. Criar a geometria do círculo usando um buffer em um ponto
+    centro_ponto <- vect(cbind(centro_x, centro_y), crs=crs(raster))
+    circulo_geom <- buffer(centro_ponto, width=raio)
+    
+    # 3. Plotar o círculo sobre o raster já plotado
+    plot(circulo_geom, add=TRUE, border="black", lwd=1, col=NA)
+    
+    # Fechar o dispositivo gráfico antes de ler o arquivo
+    dev.off()
+    
+    # Ler PNG temporário e salvar na pasta de saída com nome sequencial
+    img <- readPNG(temp_png)
+    output_file <- file.path(output_dir, sprintf("%04dt.png", output_counter))
+    writePNG(img, output_file)
+    
+    # Incrementar contador
+    output_counter <- output_counter + 1
+    
+    # Remover arquivo temporário
+    unlink(temp_png)
+    
+    cat("Processado e salvo:", output_file, "\n")
+  }, error = function(e) {
+    cat("Erro ao processar arquivo ", basename(tiff_files[i]), ": ", e$message, "\n")
+    cat("Pulando para o próximo arquivo.\n")
+  }, finally = {
+    # Garante que o dispositivo gráfico será fechado, se estiver aberto.
+    if (!is.null(dev.list())) {
+      dev.off()
+    }
+  })
+}
+
+cat("Processamento concluído. Imagens salvas em:", output_dir, "\n")
+cat("Total de arquivos processados com sucesso:", output_counter - 1, "\n")
