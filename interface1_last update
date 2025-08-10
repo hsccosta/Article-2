@@ -109,7 +109,7 @@ gerar_lista_predominancia <- function(df, classe_escolhida) {
   return(lista_resultado)
 }
 
-# Função para gerar lista de transições
+# Função para gerar lista de transições (MODIFICADA)
 gerar_lista_transicoes <- function(df, tipo_transicao) {
   # Mapeamento de classes
   classe_nomes <- c(
@@ -145,42 +145,16 @@ gerar_lista_transicoes <- function(df, tipo_transicao) {
   for (i in seq_along(lista_resultado)) {
     linha <- df_filtrado[i, ]
     
-    # Remove "CAR" dos códigos de propriedade
-    propriedades <- gsub("CAR", "", as.character(linha$cod_imovel))
+    # Usa fid_car em vez de cod_imovel
+    propriedades <- as.character(linha$fid_car)
     
-    # Formata o item principal
+    # Formata o item principal simplificado
     item_principal <- paste0(
       i, ". Nascente: ", linha$fid, "\n",
-      "   Propriedade(s): ", propriedades, "\n",
-      "   Valor de Transição: ", round(linha[[coluna_ordenacao]], 2), "\n",
-      "   Detalhes:\n"
+      "   Propriedade(s): ", propriedades
     )
     
-    # Adiciona informações específicas do tipo de transição
-    detalhes <- switch(tipo_transicao,
-                       "Formação Florestal Mantida" = paste0(
-                         "   - Área mantida como Formação Florestal: ", round(linha$t1, 2), " ha\n",
-                         "   - Porcentagem da área total: ", round(linha$t1/linha$area_total*100, 1), "%"
-                       ),
-                       "Formação Florestal Perdida" = paste0(
-                         "   - Área perdida de Formação Florestal: ", round(linha$t2, 2), " ha\n",
-                         "   - Porcentagem da área total: ", round(linha$t2/linha$area_total*100, 1), "%"
-                       ),
-                       "Sem Transição Relevante" = paste0(
-                         "   - Área sem transição relevante: ", round(linha$t4, 2), " ha\n",
-                         "   - Porcentagem da área total: ", round(linha$t4/linha$area_total*100, 1), "%"
-                       ),
-                       "Regeneração de Formação Florestal" = paste0(
-                         "   - Área regenerada para Formação Florestal: ", round(linha$t5, 2), " ha\n",
-                         "   - Porcentagem da área total: ", round(linha$t5/linha$area_total*100, 1), "%"
-                       ),
-                       "Aumento de Superfície de Água" = paste0(
-                         "   - Área com aumento de superfície de água: ", round(linha$t6, 2), " ha\n",
-                         "   - Porcentagem da área total: ", round(linha$t6/linha$area_total*100, 1), "%"
-                       )
-    )
-    
-    lista_resultado[[i]] <- paste0(item_principal, detalhes)
+    lista_resultado[[i]] <- item_principal
   }
   
   return(lista_resultado)
@@ -549,9 +523,10 @@ ui <- fluidPage(
              )
     ),
     
-    tabPanel("Transições 2022-2023",
+    tabPanel("Transições 2018-2023",
              sidebarLayout(
                sidebarPanel(
+                 width = 3,
                  selectInput("tipo_transicao", "Tipo de Transição:",
                              choices = c("Formação Florestal Mantida",
                                          "Formação Florestal Perdida",
@@ -562,7 +537,9 @@ ui <- fluidPage(
                ),
                mainPanel(
                  tags$h4("Nascentes com Transição Selecionada"),
-                 uiOutput("resultado_transicoes")
+                 div(style = "max-height: 500px; overflow-y: auto;",
+                     uiOutput("resultado_transicoes")
+                 )
                )
              )
     ),
@@ -1308,7 +1285,7 @@ server <- function(input, output, session) {
     })
   })
   
-  # Output para transições
+  # Output para transições (MODIFICADO)
   output$resultado_transicoes <- renderUI({
     req(input$tipo_transicao)
     
