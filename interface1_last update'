@@ -36,22 +36,27 @@ gerar_lista_predominancia <- function(df, classe_escolhida) {
   classe_nomes <- c(
     "3" = "Formação Florestal",
     "9" = "Floresta Plantada",
-    "11" = "Campo Alagado e Área Pantanosa",
+    "11" = "Campo Alagado e Pantanoso",
     "15" = "Pastagem",
-    "19" = "Lavoura Temporária",
+    "19" = "Cultura Temporária",
     "21" = "Mosaico de Usos",
     "24" = "Área Urbanizada",
     "25" = "Outras Áreas não Vegetadas",
-    "33" = "Rio e Lago"
+    "33" = "Rios e Lagos",
+    "0" = "Não Observado"
   )
   
   colunas_pct <- grep("^%_", names(df), value = TRUE)
   
-  df$classe_predominante <- apply(df[, colunas_pct], 1, function(x) {
+  df$classe_predominante <- apply(df[, colunas_pct, drop = FALSE], 1, function(x) {
     as.numeric(gsub("%_", "", names(x)[which.max(x)]))
   })
   
   df_filtrado <- df[df$classe_predominante == classe_escolhida, ]
+  if (nrow(df_filtrado) == 0) {
+    return(list("Nenhuma nascente com esta classe predominante"))
+  }
+  
   col_classe <- paste0("%_", classe_escolhida)
   df_filtrado <- df_filtrado[order(-df_filtrado[[col_classe]]), ]
   
@@ -103,13 +108,14 @@ gerar_lista_transicoes <- function(df, tipo_transicao) {
   classe_nomes <- c(
     "3" = "Formação Florestal",
     "9" = "Floresta Plantada",
-    "11" = "Campo Alagado e Área Pantanosa",
+    "11" = "Campo Alagado e Pantanoso",
     "15" = "Pastagem",
-    "19" = "Lavoura Temporária",
+    "19" = "Cultura Temporária",
     "21" = "Mosaico de Usos",
     "24" = "Área Urbanizada",
     "25" = "Outras Áreas não Vegetadas",
-    "33" = "Rio e Lago"
+    "33" = "Rios e Lagos",
+    "0" = "Não Observado"
   )
   
   coluna_ordenacao <- switch(tipo_transicao,
@@ -124,7 +130,13 @@ gerar_lista_transicoes <- function(df, tipo_transicao) {
     return(list("Tipo de transição inválido"))
   }
   
-  df_filtrado <- df[order(-df[[coluna_ordenacao]]), ]
+  df_filtrado <- df[df[[coluna_ordenacao]] > 0, ]
+  if (nrow(df_filtrado) == 0) {
+    return(list("Nenhuma nascente com esta transição"))
+  }
+  
+  df_filtrado <- df_filtrado[order(-df_filtrado[[coluna_ordenacao]]), ]
+  
   lista_resultado <- vector("list", nrow(df_filtrado))
   
   for (i in seq_along(lista_resultado)) {
@@ -133,7 +145,8 @@ gerar_lista_transicoes <- function(df, tipo_transicao) {
     
     item_principal <- paste0(
       i, ". Nascente: ", linha$fid, "\n",
-      "   Propriedade(s): ", propriedades
+      "   Propriedade(s): ", propriedades, "\n",
+      "   Valor da Transição: ", round(linha[[coluna_ordenacao]]), "%"
     )
     
     lista_resultado[[i]] <- item_principal
@@ -143,14 +156,14 @@ gerar_lista_transicoes <- function(df, tipo_transicao) {
 }
 
 ensure_dir <- function(path) {
-  if(!dir.exists(path)) {
+  if (!dir.exists(path)) {
     dir.create(path, recursive = TRUE, showWarnings = FALSE)
     message("Diretório criado: ", path)
   }
 }
 
 safe_load <- function(file_path, loader_func, ...) {
-  if(!file.exists(file_path)) {
+  if (!file.exists(file_path)) {
     warning(paste("Arquivo não encontrado:", file_path), immediate. = TRUE)
     return(NULL)
   }
@@ -164,7 +177,7 @@ safe_load <- function(file_path, loader_func, ...) {
 }
 
 parse_qml_colors <- function(qml_file) {
-  if(is.null(qml_file) || !file.exists(qml_file)) {
+  if (is.null(qml_file) || !file.exists(qml_file)) {
     message("Usando cores padrão - arquivo QML não encontrado")
     return(c(
       "Formação Florestal" = "#1f8d49",
@@ -187,7 +200,7 @@ parse_qml_colors <- function(qml_file) {
     }
   )
   
-  if(is.null(qml)) return(NULL)
+  if (is.null(qml)) return(NULL)
   
   nodes <- xml_find_all(qml, ".//paletteEntry")
   labels <- xml_attr(nodes, "label")
@@ -241,24 +254,24 @@ legenda_lulc <- function() {
 render_image_helper <- function(nasc_id_val) {
   nasc_id_formatted <- sprintf("%04d", as.numeric(nasc_id_val))
   
-  if(!dir.exists(file.path(base_path, "lulc_raw/resymb/tiras_lulc"))) {
+  if (!dir.exists(file.path(base_path, "lulc_raw/resymb/tiras_lulc"))) {
     return(tags$div(class = "alert alert-danger",
                     paste("Diretório de imagens não encontrado:", file.path(base_path, "lulc_raw/resymb/tiras_lulc"))))
   }
   
   img_patterns <- c("\\.jpg$", "\\.jpeg$", "\\.png$")
   img_files <- NULL
-  for(pattern in img_patterns) {
+  for (pattern in img_patterns) {
     img_files <- list.files(
       path = file.path(base_path, "lulc_raw/resymb/tiras_lulc"),
       pattern = paste0("^", nasc_id_formatted, pattern),
       ignore.case = TRUE,
       full.names = TRUE
     )
-    if(length(img_files) > 0) break
+    if (length(img_files) > 0) break
   }
   
-  if(length(img_files) > 0) {
+  if (length(img_files) > 0) {
     tryCatch({
       img <- image_read(img_files[1]) %>% image_scale("700x")
       tmp_file <- tempfile(fileext = ".jpg")
@@ -289,7 +302,7 @@ shp_nascentes <- safe_load(file.path(base_path, "nascentes.shp"), st_read, quiet
 raster_2023 <- safe_load(file.path(base_path, "2023.tif"), raster)
 df_nascentes <- safe_load(file.path(base_path, "0001.xlsx"), read_excel)
 
-logos_img <- if(file.exists(file.path(base_path, "logos_combinados.jpg"))) {
+logos_img <- if (file.exists(file.path(base_path, "logos_combinados.jpg"))) {
   dataURI(file = file.path(base_path, "logos_combinados.jpg"), mime = "image/jpeg")
 } else {
   warning("Arquivo de logos não encontrado", immediate. = TRUE)
@@ -342,7 +355,7 @@ ui <- fluidPage(
       @keyframes blink-animation {
         0% { fill-opacity: 1; }
         50% { fill-opacity: 0.2; }
-        100% { fill-opacity: 1;
+        100% { fill-opacity: 1; }
       }
       .fid-label {
         font-weight: bold;
@@ -395,23 +408,26 @@ ui <- fluidPage(
         background-color: #d9edf7;
         border-color: #bce8f1;
       }
-      .foto-thumbnail {
-        max-width: 100px;
-        max-height: 100px;
-        margin-right: 10px;
-        margin-bottom: 10px;
+      #sidebar_identificacao .foto-thumbnail {
+        max-width: 70px;
+        max-height: 70px;
+        margin-right: 3px;
+        margin-bottom: 3px;
         border: 1px solid #ddd;
         border-radius: 4px;
       }
-      .foto-container {
+      #sidebar_identificacao .foto-container {
         display: flex;
         flex-wrap: wrap;
-        margin-top: 10px;
+        gap: 3px;
+        margin-top: 5px;
+        max-height: 200px;
+        overflow-y: auto;
       }
     "))
   ),
   
-  if(!is.null(logos_img)) {
+  if (!is.null(logos_img)) {
     tags$img(src = logos_img, style = "width: 380px;")
   } else {
     tags$div(class = "alert alert-warning", "Logotipo não encontrado")
@@ -515,7 +531,6 @@ ui <- fluidPage(
                                     choices = c("Nascentes", "CAR", "APA de Campinas"),
                                     selected = c("Nascentes", "CAR", "APA de Campinas")),
                  textInput("ids_sel", "Buscar por Nascente(s):", placeholder = "ex: 12, 45, 321"),
-                 uiOutput("propriedades_ui"),
                  downloadButton("exportar_mapa", "Exportar Mapa (.png)", class = "btn-info")
                ),
                mainPanel(
@@ -527,6 +542,7 @@ ui <- fluidPage(
     tabPanel("Identificação",
              sidebarLayout(
                sidebarPanel(
+                 id = "sidebar_identificacao",
                  numericInput("prop_id_ident", "ID da Propriedade (CAR) (1 - 675):", 
                               value = NA, min = 1, max = 675),
                  uiOutput("nascentes_for_prop_ident"),
@@ -575,7 +591,7 @@ A versão 1.0, criada em julho de 2025 para a Área de Proteção Ambiental de C
 server <- function(input, output, session) {
   # Dados reativos
   df <- reactive({
-    if(is.null(df_nascentes)) {
+    if (is.null(df_nascentes)) {
       showNotification("Dados de nascentes não encontrados. Verifique o arquivo Excel.", 
                        type = "error", duration = NULL)
       return(data.frame())
@@ -586,7 +602,7 @@ server <- function(input, output, session) {
     fid_col <- which(colnames_lower %in% c("fid", "id"))
     fid_car_col <- which(colnames_lower %in% c("fid_car", "id_car", "id car", "car"))
     
-    if(length(fid_col) != 1 || length(fid_car_col) != 1) {
+    if (length(fid_col) != 1 || length(fid_car_col) != 1) {
       showNotification("Colunas 'fid' e/ou 'fid_car' não encontradas nos dados.", 
                        type = "error", duration = NULL)
       return(data.frame())
@@ -606,24 +622,24 @@ server <- function(input, output, session) {
   
   # Shapes reativos
   shape_apa <- reactive({
-    if(is.null(shp_apa)) return(NULL)
+    if (is.null(shp_apa)) return(NULL)
     st_transform(shp_apa, 4326)
   })
   
   shape_car <- reactive({
-    if(is.null(shp_car)) return(NULL)
+    if (is.null(shp_car)) return(NULL)
     st_transform(shp_car, 4326)
   })
   
   shape_nascentes <- reactive({
-    if(is.null(shp_nascentes)) return(NULL)
+    if (is.null(shp_nascentes)) return(NULL)
     st_transform(shp_nascentes, 4326)
   })
   
   # Função para carregar dados existentes de uma nascente
   load_nascente_data <- function(nasc_id) {
     dados_path <- file.path(base_path, "repositorio/fotos", paste0("nascente_", nasc_id, "_dados.csv"))
-    if(file.exists(dados_path)) {
+    if (file.exists(dados_path)) {
       read.csv(dados_path, stringsAsFactors = FALSE)
     } else {
       NULL
@@ -633,7 +649,7 @@ server <- function(input, output, session) {
   # Observer para carregar dados quando o ID muda
   observeEvent(input$nascente_id_ident, {
     dados <- load_nascente_data(input$nascente_id_ident)
-    if(!is.null(dados)) {
+    if (!is.null(dados)) {
       updateTextInput(session, "nome_nascente", value = dados$Nome_Nascente)
       updateTextInput(session, "responsavel", value = dados$Responsavel)
       updateTextInput(session, "apoiador", value = dados$Apoiador)
@@ -659,14 +675,14 @@ server <- function(input, output, session) {
   
   # Observers para nascentes
   observeEvent(input$nascente_id_ident, {
-    if(!is.na(input$nascente_id_ident)) {
+    if (!is.na(input$nascente_id_ident)) {
       last_valid_nasc_id(input$nascente_id_ident)
       updateNumericInput(session, "nascente_id", value = input$nascente_id_ident)
     }
   }, ignoreInit = TRUE)
   
   observeEvent(input$nascente_id, {
-    if(!is.na(input$nascente_id)) {
+    if (!is.na(input$nascente_id)) {
       last_valid_nasc_id(input$nascente_id)
       updateNumericInput(session, "nascente_id_ident", value = input$nascente_id)
     }
@@ -674,17 +690,16 @@ server <- function(input, output, session) {
   
   # Observers para propriedades
   observeEvent(input$prop_id_ident, {
-    if(!is.na(input$prop_id_ident)) {
+    if (!is.na(input$prop_id_ident)) {
       last_valid_prop_id_ident(input$prop_id_ident)
       updateNumericInput(session, "prop_id", value = input$prop_id_ident)
       
-      # Atualiza o mapa para destacar a propriedade
       proxy <- leafletProxy("mapa_apa")
       proxy %>% clearGroup("Propriedade Destacada")
       
-      if(!is.null(shape_car())) {
+      if (!is.null(shape_car())) {
         propriedade <- shape_car()[shape_car()$fid == input$prop_id_ident, ]
-        if(nrow(propriedade) > 0) {
+        if (nrow(propriedade) > 0) {
           proxy %>% addPolygons(
             data = propriedade,
             group = "Propriedade Destacada",
@@ -711,7 +726,7 @@ server <- function(input, output, session) {
   }, ignoreInit = TRUE)
   
   observeEvent(input$prop_id, {
-    if(!is.na(input$prop_id)) {
+    if (!is.na(input$prop_id)) {
       updateNumericInput(session, "prop_id_ident", value = input$prop_id)
     }
   }, ignoreInit = TRUE)
@@ -719,7 +734,7 @@ server <- function(input, output, session) {
   # Atualiza os inputs numéricos com os limites corretos
   observe({
     dados <- df()
-    if(nrow(dados) > 0) {
+    if (nrow(dados) > 0) {
       updateNumericInput(session, "nascente_id_ident", 
                          min = min(dados$fid, na.rm = TRUE),
                          max = max(dados$fid, na.rm = TRUE))
@@ -740,7 +755,7 @@ server <- function(input, output, session) {
   
   # --- Mapa Principal (Topográfico) ---
   output$mapa_apa <- renderLeaflet({
-    if(is.null(shape_apa())) {
+    if (is.null(shape_apa())) {
       return(leaflet() %>% 
                addProviderTiles("Esri.WorldTopoMap") %>%
                setView(lng = -47.06, lat = -22.90, zoom = 11.8) %>%
@@ -758,7 +773,7 @@ server <- function(input, output, session) {
   
   # --- Mapa para Transições ---
   output$mapa_transicoes <- renderLeaflet({
-    if(is.null(shape_apa())) {
+    if (is.null(shape_apa())) {
       return(leaflet() %>% 
                addProviderTiles("Esri.WorldTopoMap") %>%
                setView(lng = -47.06, lat = -22.90, zoom = 11.8) %>%
@@ -816,7 +831,7 @@ server <- function(input, output, session) {
     }
     
     dados <- df()
-    if(nrow(dados) > 0) {
+    if (nrow(dados) > 0) {
       transicao_col <- switch(input$tipo_transicao,
                               "Formação Florestal Mantida" = "t1",
                               "Formação Florestal Perdida" = "t2",
@@ -825,16 +840,16 @@ server <- function(input, output, session) {
                               "Aumento de Superfície de Água" = "t6"
       )
       
-      if(!is.null(transicao_col) && transicao_col %in% names(dados)) {
+      if (!is.null(transicao_col) && transicao_col %in% names(dados)) {
         nasc_ids <- dados %>% 
           filter(.data[[transicao_col]] > 0) %>% 
           pull(fid) %>% 
           unique()
         
-        if(length(nasc_ids) > 0 && !is.null(shape_nascentes())) {
+        if (length(nasc_ids) > 0 && !is.null(shape_nascentes())) {
           feicoes <- shape_nascentes()[shape_nascentes()$fid %in% nasc_ids, ]
           
-          if(nrow(feicoes) > 0) {
+          if (nrow(feicoes) > 0) {
             proxy %>% 
               addPolygons(
                 data = feicoes,
@@ -861,8 +876,8 @@ server <- function(input, output, session) {
               iconAnchorY = 30
             )
             
-            for(i in 1:nrow(centroides)) {
-              coords <- st_coordinates(centroides[i,])
+            for (i in 1:nrow(centroides)) {
+              coords <- st_coordinates(centroides[i, ])
               proxy %>% addMarkers(
                 lng = coords[1, "X"],
                 lat = coords[1, "Y"],
@@ -941,10 +956,10 @@ server <- function(input, output, session) {
         height <- bbox[4] - bbox[2]
         
         bbox_zoom <- bbox + c(
-          width * 0.2,
-          height * 0.2,
           -width * 0.2,
-          -height * 0.2
+          -height * 0.2,
+          width * 0.2,
+          height * 0.2
         )
         
         proxy %>% 
@@ -971,7 +986,7 @@ server <- function(input, output, session) {
         )
         
         for (i in 1:nrow(centroides)) {
-          coords <- st_coordinates(centroides[i,])
+          coords <- st_coordinates(centroides[i, ])
           proxy %>% addMarkers(
             lng = coords[1, "X"],
             lat = coords[1, "Y"],
@@ -989,9 +1004,9 @@ server <- function(input, output, session) {
       }
     }
     
-    if(!is.null(input$prop_id_ident) && !is.na(input$prop_id_ident) && !is.null(shape_car())) {
+    if (!is.null(input$prop_id_ident) && !is.na(input$prop_id_ident) && !is.null(shape_car())) {
       propriedade <- shape_car()[shape_car()$fid == input$prop_id_ident, ]
-      if(nrow(propriedade) > 0) {
+      if (nrow(propriedade) > 0) {
         proxy %>% addPolygons(
           data = propriedade,
           group = "Propriedade Destacada",
@@ -1055,7 +1070,7 @@ server <- function(input, output, session) {
           weight = 2, 
           fillColor = "lightgray", 
           fillOpacity = 0.2,
-          label = ~paste("Propriedade:", fid_car)
+          label = ~paste("Propriedade:", fid)
         )
       }
       
@@ -1092,7 +1107,7 @@ server <- function(input, output, session) {
           
           centroides <- st_centroid(feicoes)
           for (i in 1:nrow(centroides)) {
-            coords <- st_coordinates(centroides[i,])
+            coords <- st_coordinates(centroides[i, ])
             map <- map %>% addMarkers(
               lng = coords[1, "X"],
               lat = coords[1, "Y"],
@@ -1109,9 +1124,9 @@ server <- function(input, output, session) {
         }
       }
       
-      if(!is.null(input$prop_id_ident) && !is.na(input$prop_id_ident) && !is.null(shape_car())) {
+      if (!is.null(input$prop_id_ident) && !is.na(input$prop_id_ident) && !is.null(shape_car())) {
         propriedade <- shape_car()[shape_car()$fid == input$prop_id_ident, ]
-        if(nrow(propriedade) > 0) {
+        if (nrow(propriedade) > 0) {
           map <- map %>% addPolygons(
             data = propriedade,
             fillColor = "yellow",
@@ -1137,14 +1152,14 @@ server <- function(input, output, session) {
   output$props_for_nascente <- renderUI({
     req(input$nascente_id)
     dados <- df()
-    if(nrow(dados) == 0) return(tags$p("Dados não disponíveis."))
+    if (nrow(dados) == 0) return(tags$p("Dados não disponíveis."))
     
     props <- dados %>% 
       filter(fid == input$nascente_id) %>% 
       pull(fid_car) %>% 
       unique()
     
-    if(length(props) == 0) return(tags$p("Nenhuma propriedade encontrada para esta nascente."))
+    if (length(props) == 0) return(tags$p("Nenhuma propriedade encontrada para esta nascente."))
     
     tags$p(
       class = "label-prop-nasc", 
@@ -1158,14 +1173,14 @@ server <- function(input, output, session) {
   output$props_for_nascente_ident <- renderUI({
     req(input$nascente_id_ident)
     dados <- df()
-    if(nrow(dados) == 0) return(tags$p("Dados não disponíveis."))
+    if (nrow(dados) == 0) return(tags$p("Dados não disponíveis."))
     
     props <- dados %>% 
       filter(fid == input$nascente_id_ident) %>% 
       pull(fid_car) %>% 
       unique()
     
-    if(length(props) == 0) return(tags$p("Nenhuma propriedade encontrada para esta nascente."))
+    if (length(props) == 0) return(tags$p("Nenhuma propriedade encontrada para esta nascente."))
     
     tags$p(
       class = "label-prop-nasc", 
@@ -1179,14 +1194,37 @@ server <- function(input, output, session) {
   output$nascentes_for_prop <- renderUI({
     req(input$prop_id)
     dados <- df()
-    if(nrow(dados) == 0) return(tags$p("Dados não disponíveis."))
+    if (nrow(dados) == 0) return(tags$p("Dados não disponíveis."))
     
     nasc_ids <- dados %>% 
       filter(fid_car == input$prop_id) %>% 
       pull(fid) %>% 
       unique()
     
-    if(length(nasc_ids) == 0) return(tags$p("Nenhuma nascente encontrada para esta propriedade."))
+    if (length(nasc_ids) == 0) return(tags$p("Nenhuma nascente encontrada para esta propriedade."))
+    
+    tags$p(
+      class = "label-prop-nasc", 
+      HTML(paste0(
+        "<strong>Nascente(s) na Propriedade:</strong><br>",
+        "<div style='max-height: 100px; overflow-y: auto;'>",
+        paste(nasc_ids, collapse = ", "),
+        "</div>"
+      ))
+    )
+  })
+  
+  output$nascentes_for_prop_ident <- renderUI({
+    req(input$prop_id_ident)
+    dados <- df()
+    if (nrow(dados) == 0) return(tags$p("Dados não disponíveis."))
+    
+    nasc_ids <- dados %>% 
+      filter(fid_car == input$prop_id_ident) %>% 
+      pull(fid) %>% 
+      unique()
+    
+    if (length(nasc_ids) == 0) return(tags$p("Nenhuma nascente encontrada para esta propriedade."))
     
     tags$p(
       class = "label-prop-nasc", 
@@ -1214,14 +1252,14 @@ server <- function(input, output, session) {
   output$image_propriedade <- renderUI({
     req(input$prop_id)
     dados <- df()
-    if(nrow(dados) == 0) return(tags$p("Dados não disponíveis."))
+    if (nrow(dados) == 0) return(tags$p("Dados não disponíveis."))
     
     nasc_ids <- dados %>% 
       filter(fid_car == input$prop_id) %>% 
       pull(fid) %>% 
       unique()
     
-    if(length(nasc_ids) == 0) return(tags$p("Nenhuma nascente encontrada para esta propriedade."))
+    if (length(nasc_ids) == 0) return(tags$p("Nenhuma nascente encontrada para esta propriedade."))
     
     do.call(tagList, lapply(unique(nasc_ids), function(nid) {
       tagList(
@@ -1246,7 +1284,7 @@ server <- function(input, output, session) {
       full.names = TRUE
     )
     
-    if(length(fotos) > 0) {
+    if (length(fotos) > 0) {
       tagList(
         tags$h5("Fotos salvas:"),
         tags$div(
@@ -1269,7 +1307,7 @@ server <- function(input, output, session) {
   
   # Salvar dados
   observeEvent(input$salvar_dados, {
-    if(!input$consentimento) {
+    if (!input$consentimento) {
       showNotification("Por favor, marque o consentimento para salvar os dados.", type = "warning")
       return()
     }
@@ -1290,13 +1328,13 @@ server <- function(input, output, session) {
     file_name <- paste0("nascente_", input$nascente_id_ident, "_dados.csv")
     write.csv(dados_salvar, file = file.path(base_path, "repositorio/fotos", file_name), row.names = FALSE)
     
-    if(!is.null(input$fotos_nascente)) {
+    if (!is.null(input$fotos_nascente)) {
       old_photos <- list.files(
         path = file.path(base_path, "repositorio/fotos"),
         pattern = paste0("nascente_", input$nascente_id_ident, "_foto\\d+_.*\\.(jpg|jpeg|png)"),
         full.names = TRUE
       )
-      if(length(old_photos) > 0) file.remove(old_photos)
+      if (length(old_photos) > 0) file.remove(old_photos)
       
       sapply(1:nrow(input$fotos_nascente), function(i) {
         file_ext <- tools::file_ext(input$fotos_nascente$name[i])
@@ -1321,7 +1359,7 @@ server <- function(input, output, session) {
         full.names = TRUE
       )
       
-      if(length(fotos) > 0) {
+      if (length(fotos) > 0) {
         tagList(
           tags$h5("Fotos salvas:"),
           tags$div(
@@ -1361,16 +1399,17 @@ server <- function(input, output, session) {
     classe_numerica <- switch(input$classe_escolhida,
                               "Formação Florestal" = 3,
                               "Floresta Plantada" = 9,
-                              "Campo Alagado e Área Pantanosa" = 11,
+                              "Campo Alagado e Pantanoso" = 11,
                               "Pastagem" = 15,
-                              "Lavoura Temporária" = 19,
+                              "Cultura Temporária" = 19,
                               "Mosaico de Usos" = 21,
                               "Área Urbanizada" = 24,
                               "Outras Áreas não Vegetadas" = 25,
-                              "Rio e Lago" = 33
+                              "Rios e Lagos" = 33,
+                              "Não Observado" = 0
     )
     
-    if (is.na(classe_numerica)) return(tags$p("Classe inválida."))
+    if (is.null(classe_numerica)) return(tags$p("Classe inválida."))
     
     dados <- df()
     if (nrow(dados) == 0) return(tags$p("Dados não disponíveis."))
