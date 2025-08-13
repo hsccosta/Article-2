@@ -199,15 +199,6 @@ safe_load <- function(file_path, loader_func, ...) {
 render_transicao_image <- function(nasc_id_val, tipo_transicao) {
   nasc_id_formatted <- sprintf("%04d", as.numeric(nasc_id_val))
   
-  # Define o prefixo baseado no tipo de transição
-  prefixo <- switch(tipo_transicao,
-                    "Formação Florestal Mantida" = "",
-                    "Formação Florestal Perdida" = "",
-                    "Regeneração de Formação Florestal" = "",
-                    "Aumento de Superfície de Água" = ""
-  )
-  
-  # Padrão do nome do arquivo (agora sem prefixo)
   img_pattern <- paste0("^", nasc_id_formatted, "\\.png$")
   img_file <- list.files(path = file_paths$transicao_path, 
                          pattern = img_pattern, 
@@ -215,14 +206,14 @@ render_transicao_image <- function(nasc_id_val, tipo_transicao) {
   
   if (length(img_file) > 0) {
     tryCatch({
-      # Redimensiona para 100% maior (800x se original for 400x)
-      img <- image_read(img_file[1]) %>% image_scale("800x")
+      # Remova o redimensionamento (image_scale)
+      img <- image_read(img_file[1])
       tmp_file <- tempfile(fileext = ".png")
       image_write(img, tmp_file)
       uri <- base64enc::dataURI(file = tmp_file, mime = "image/png")
       unlink(tmp_file)
       tags$div(
-        style = "text-align: center;",
+        style = "text-align: left;",  # Alinhar à esquerda
         tags$img(
           src = uri, 
           style = "max-width: 100%; height: auto; border: 1px solid #ddd;"
@@ -380,22 +371,23 @@ render_image_helper <- function(nasc_id_val) {
 ui <- fluidPage(
   tags$head(
     tags$style(HTML("
-      .transicao-container {
-        display: flex;
-        margin-bottom: 15px;
-        border-bottom: 1px solid #eee;
-        padding-bottom: 15px;
-      }
-      .transicao-lista {
-        flex: 1;
-        padding-right: 15px;
-        white-space: pre-wrap;
-        font-family: monospace;
-      }
-      .transicao-imagem {
-        flex: 1;
-        text-align: center;
-      }
+  .transicao-container {
+    display: flex;
+    margin-bottom: 15px;
+    border-bottom: 1px solid #eee;
+    padding-bottom: 15px;
+    align-items: flex-start;  /* Alinhar itens no topo */
+  }
+  .transicao-lista {
+    flex: 1;
+    padding-left: 15px;  /* Espaço à esquerda da lista */
+    white-space: pre-wrap;
+    font-family: monospace;
+  }
+  .transicao-imagem {
+    flex: 0 0 auto;  /* Não crescer, não encolher, largura automática */
+    margin-right: 15px;  /* Espaço entre imagem e lista */
+  }
       /* Cor do texto dos títulos das abas */
       .nav-tabs>li>a {
         color: #42a5f5 !important;  /* Azul similar ao usado no título principal */
@@ -573,13 +565,12 @@ ui <- fluidPage(
                                          "Área Urbanizada", "Campo Alagado e Pantanoso", "Não Observado"))
                ),
                mainPanel(
-                 tags$h4("Nascentes com Classe Predominante Selecionada"),
                  uiOutput("resultado_classe")
                )
              )
     ),
     
-    tabPanel("Transições 2022-2023",
+    tabPanel("Transições 2018-2023",
              sidebarLayout(
                sidebarPanel(
                  width = 3,
@@ -594,8 +585,7 @@ ui <- fluidPage(
                ),
                mainPanel(
                  tabsetPanel(
-                   tabPanel("Listagem",
-                            tags$h4("Nascentes com Transição Selecionada"),
+                   tabPanel("Lista",
                             div(style = "max-height: 800px; overflow-y: auto;",
                                 uiOutput("resultado_transicoes")
                             )
@@ -1383,11 +1373,11 @@ server <- function(input, output, session) {
       lapply(seq_along(lista), function(i) {
         tagList(
           div(class = "transicao-container",
-              div(class = "transicao-lista",
-                  HTML(paste0("<pre>", lista[[i]], "</pre>"))
-              ),
-              div(class = "transicao-imagem",
+              div(class = "transicao-imagem",  # Imagem primeiro (esquerda)
                   render_transicao_image(nasc_ids[i], input$tipo_transicao)
+              ),
+              div(class = "transicao-lista",  # Lista depois (direita)
+                  HTML(paste0("<pre>", lista[[i]], "</pre>"))
               )
           ),
           hr()
