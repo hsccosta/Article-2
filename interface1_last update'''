@@ -31,8 +31,13 @@ suppressMessages({
   if(length(missing_packages) > 0) install.packages(missing_packages, quiet = TRUE)
 })
 
+# --- FUNÇÕES AUXILIARES ---
+
 gerar_lista_predominancia <- function(df, classe_escolhida) {
-  # Mapeamento CORRETO conforme especificado
+  if (!is.data.frame(df) || nrow(df) == 0) {
+    return(list("Dados inválidos ou vazios"))
+  }
+  
   classe_nomes <- c(
     "3" = "Formação Florestal",
     "9" = "Floresta Plantada",
@@ -45,115 +50,64 @@ gerar_lista_predominancia <- function(df, classe_escolhida) {
     "33" = "Rio e Lago"
   )
   
-  # Identifica colunas de porcentagem
   colunas_pct <- grep("^%_", names(df), value = TRUE)
   
-  # Determina classe predominante para cada linha
-  df$classe_predominante <- apply(df[, colunas_pct], 1, function(x) {
+  if (length(colunas_pct) == 0) {
+    return(list("Nenhuma coluna de porcentagem encontrada"))
+  }
+  
+  df$classe_predominante <- apply(df[, colunas_pct, drop = FALSE], 1, function(x) {
     as.numeric(gsub("%_", "", names(x)[which.max(x)]))
   })
   
-  # Filtra para a classe escolhida e ordena
   df_filtrado <- df[df$classe_predominante == classe_escolhida, ]
   col_classe <- paste0("%_", classe_escolhida)
+  
+  if (!col_classe %in% names(df_filtrado)) {
+    return(list(paste("Coluna", col_classe, "não encontrada")))
+  }
+  
   df_filtrado <- df_filtrado[order(-df_filtrado[[col_classe]]), ]
   
   lista_resultado <- vector("list", nrow(df_filtrado))
   
   for (i in seq_len(nrow(df_filtrado))) {
     linha <- df_filtrado[i, ]
-    
-    # Remove "CAR" dos códigos de propriedade
     propriedades <- gsub("CAR", "", as.character(linha$cod_imovel))
     
-    # Processa classes não predominantes
-    outras_classes <- linha[, colunas_pct[!colunas_pct %in% col_classe, drop = FALSE]]
+    outras_classes <- linha[, setdiff(colunas_pct, col_classe), drop = FALSE]
     
-    # Formata as classes secundárias
     outras_linhas <- sapply(names(outras_classes), function(col) {
       valor <- as.numeric(linha[[col]])
       if (valor > 0) {
         num_classe <- gsub("%_", "", col)
-        nome_classe <- classe_nomes[num_classe]  # Obtém nome da classe
-        if (is.na(nome_classe)) nome_classe <- paste("Classe Desconhecida (", num_classe, ")", sep = "")
+        nome_classe <- ifelse(is.na(classe_nomes[num_classe]), 
+                              paste("Classe Desconhecida (", num_classe, ")", sep = ""),
+                              classe_nomes[num_classe])
         sprintf("   - %s: %d%%", nome_classe, round(valor))
       } else {
         NULL
       }
     })
     
-    # Remove entradas nulas
     outras_linhas <- unlist(outras_linhas[!sapply(outras_linhas, is.null)])
     
     if (length(outras_linhas) == 0) {
       outras_linhas <- "   - Nenhuma outra classe com porcentagem > 0%"
     }
     
-    # Obtém nome da classe predominante
-    nome_classe_pred <- classe_nomes[as.character(classe_escolhida)]
-    if (is.na(nome_classe_pred)) nome_classe_pred <- paste("Classe Desconhecida (", classe_escolhida, ")", sep = "")
+    nome_classe_pred <- ifelse(is.na(classe_nomes[as.character(classe_escolhida)]),
+                               paste("Classe Desconhecida (", classe_escolhida, ")", sep = ""),
+                               classe_nomes[as.character(classe_escolhida)])
     
-    # Formata o item principal
-    item_principal <- paste0(
+    lista_resultado[[i]] <- paste0(
       i, ". Nascente: ", linha$fid, "\n",
       "   Propriedade(s): ", propriedades, "\n",
       "   Classe predominante: ", nome_classe_pred, 
       " (", round(linha[[col_classe]]), "%)\n",
-      "   Outras classes:\n"
+      "   Outras classes:\n",
+      paste(outras_linhas, collapse = "\n")
     )
-    
-    # Combina tudo
-    lista_resultado[[i]] <- paste0(item_principal, paste(outras_linhas, collapse = "\n"))
-  }
-  
-  return(lista_resultado)
-}
-
-# Função para gerar lista de transições
-gerar_lista_transicoes <- function(df, tipo_transicao) {
-  # Mapeamento de classes
-  classe_nomes <- c(
-    "3" = "Formação Florestal",
-    "9" = "Floresta Plantada",
-    "11" = "Campo Alagado e Área Pantanosa",
-    "15" = "Pastagem",
-    "19" = "Lavoura Temporária",
-    "21" = "Mosaico de Usos",
-    "24" = "Área Urbanizada",
-    "25" = "Outras Áreas não Vegetadas",
-    "33" = "Rio e Lago"
-  )
-  
-  # Determina coluna de ordenação baseada no tipo de transição
-  coluna_ordenacao <- switch(tipo_transicao,
-                             "Formação Florestal Mantida" = "t1",
-                             "Formação Florestal Perdida" = "t2",
-                             "Regeneração de Formação Florestal" = "t4",
-                             "Aumento de Superfície de Água" = "t5"
-  )
-  
-  if (is.null(coluna_ordenacao)) {
-    return(list("Tipo de transição inválido"))
-  }
-  
-  # Filtra os dados (remove a limitação de 50 itens)
-  df_filtrado <- df[order(-df[[coluna_ordenacao]]), ]
-  
-  lista_resultado <- vector("list", nrow(df_filtrado))
-  
-  for (i in seq_along(lista_resultado)) {
-    linha <- df_filtrado[i, ]
-    
-    # Obtém o fid_car da propriedade
-    propriedades <- as.character(linha$fid_car)
-    
-    # Formata o item principal
-    item_principal <- paste0(
-      i, ". Nascente: ", linha$fid, "\n",
-      "   Propriedade(s): ", propriedades, "\n"
-    )
-    
-    lista_resultado[[i]] <- item_principal
   }
   
   return(lista_resultado)
@@ -174,7 +128,6 @@ file_paths <- list(
   transicao_path = file.path(base_path, "transição/transição_2018-2023/PNG_Saida")
 )
 
-# --- FUNÇÕES AUXILIARES ---
 ensure_dir <- function(path) {
   if(!dir.exists(path)) {
     dir.create(path, recursive = TRUE, showWarnings = FALSE)
@@ -196,7 +149,7 @@ safe_load <- function(file_path, loader_func, ...) {
   )
 }
 
-render_transicao_image <- function(nasc_id_val, tipo_transicao) {
+render_transicao_image <- function(nasc_id_val) {
   nasc_id_formatted <- sprintf("%04d", as.numeric(nasc_id_val))
   
   img_pattern <- paste0("^", nasc_id_formatted, "\\.png$")
@@ -206,14 +159,13 @@ render_transicao_image <- function(nasc_id_val, tipo_transicao) {
   
   if (length(img_file) > 0) {
     tryCatch({
-      # Remova o redimensionamento (image_scale)
       img <- image_read(img_file[1])
       tmp_file <- tempfile(fileext = ".png")
       image_write(img, tmp_file)
       uri <- base64enc::dataURI(file = tmp_file, mime = "image/png")
       unlink(tmp_file)
       tags$div(
-        style = "text-align: left;",  # Alinhar à esquerda
+        style = "text-align: left;",
         tags$img(
           src = uri, 
           style = "max-width: 100%; height: auto; border: 1px solid #ddd;"
@@ -229,26 +181,6 @@ render_transicao_image <- function(nasc_id_val, tipo_transicao) {
   }
 }
 
-# --- CARREGAMENTO DE DADOS ---
-message("Carregando dados...")
-
-ensure_dir(file_paths$save_path)
-ensure_dir(file_paths$fotos_path)
-
-shp_apa <- safe_load(file_paths$shp_apa, st_read, quiet = TRUE)
-shp_car <- safe_load(file_paths$shp_car, st_read, quiet = TRUE)
-shp_nascentes <- safe_load(file_paths$shp_nascentes, st_read, quiet = TRUE)
-raster_2023 <- safe_load(file_paths$raster_2023, raster)
-df_nascentes <- safe_load(file_paths$nascente_excel, read_excel)
-
-logos_img <- if(file.exists(file_paths$logos)) {
-  dataURI(file = file_paths$logos, mime = "image/jpeg")
-} else {
-  warning("Arquivo de logos não encontrado", immediate. = TRUE)
-  NULL
-}
-
-# --- FUNÇÃO PARA EXTRAIR CORES DO QML ---
 parse_qml_colors <- function(qml_file) {
   if(is.null(qml_file) || !file.exists(qml_file)) {
     message("Usando cores padrão - arquivo QML não encontrado")
@@ -297,9 +229,6 @@ parse_qml_colors <- function(qml_file) {
   setNames(cores_filtradas, nomes_traduzidos)
 }
 
-cores_mapbiomas <- parse_qml_colors(file_paths$qml)
-
-# --- FUNÇÃO PARA GERAR LEGENDA LULC ---
 legenda_lulc <- function() {
   classes <- data.frame(
     nome = c("Formação Florestal", "Floresta Plantada", "Pastagem",
@@ -327,7 +256,6 @@ legenda_lulc <- function() {
   )
 }
 
-# --- FUNÇÃO PARA RENDERIZAR IMAGENS ---
 render_image_helper <- function(nasc_id_val) {
   nasc_id_formatted <- sprintf("%04d", as.numeric(nasc_id_val))
   
@@ -371,36 +299,30 @@ render_image_helper <- function(nasc_id_val) {
 ui <- fluidPage(
   tags$head(
     tags$style(HTML("
-  .transicao-container {
-    display: flex;
-    margin-bottom: 15px;
-    border-bottom: 1px solid #eee;
-    padding-bottom: 15px;
-    align-items: flex-start;  /* Alinhar itens no topo */
-  }
-  .transicao-lista {
-    flex: 1;
-    padding-left: 15px;  /* Espaço à esquerda da lista */
-    white-space: pre-wrap;
-    font-family: monospace;
-  }
-  .transicao-imagem {
-    flex: 0 0 auto;  /* Não crescer, não encolher, largura automática */
-    margin-right: 15px;  /* Espaço entre imagem e lista */
-  }
-      /* Cor do texto dos títulos das abas */
-      .nav-tabs>li>a {
-        color: #42a5f5 !important;  /* Azul similar ao usado no título principal */
+      .transicao-container {
+        display: flex;
+        margin-bottom: 15px;
+        border-bottom: 1px solid #eee;
+        padding-bottom: 15px;
+        align-items: flex-start;
       }
-      
-      /* Cor do texto da aba ativa */
+      .transicao-lista {
+        flex: 1;
+        padding-left: 15px;
+        white-space: pre-wrap;
+        font-family: monospace;
+      }
+      .transicao-imagem {
+        flex: 0 0 auto;
+        margin-right: 15px;
+      }
+      .nav-tabs>li>a {
+        color: #42a5f5 !important;
+      }
       .nav-tabs>li.active>a {
-        color: #333 !important;      /* Cor mais escura para a aba ativa */
+        color: #333 !important;
         font-weight: bold;
       }
-    ")),
-    
-    tags$style(HTML("
       body, .form-control, .selectize-input, .leaflet-popup-content,
       .shiny-output-error-validation, .shiny-output-error,
       h1, h2, h3, h4, h5, h6, label, .leaflet-control, .dataTables_wrapper {
@@ -579,24 +501,15 @@ ui <- fluidPage(
                                          "Formação Florestal Perdida",
                                          "Regeneração de Formação Florestal",
                                          "Aumento de Superfície de Água"),
-                             selected = "Formação Florestal Mantida"),
-                 checkboxInput("mostrar_mapa", "Mostrar no mapa", value = TRUE),
-                 actionButton("exportar_transicoes", "Exportar Dados", class = "btn-info")
+                             selected = "Formação Florestal Mantida")
                ),
                mainPanel(
                  tabsetPanel(
-                   tabPanel("Lista",
-                            div(style = "max-height: 800px; overflow-y: auto;",
-                                uiOutput("resultado_transicoes")
-                            )
+                   tabPanel("Lista de Nascentes",
+                            uiOutput("resultado_transicoes")
                    ),
-                   tabPanel("Visualização",
-                            leafletOutput("mapa_transicoes", height = 500),
-                            plotlyOutput("grafico_transicoes", height = 300)
-                   ),
-                   tabPanel("Resumo Estatístico",
-                            verbatimTextOutput("estatisticas_transicoes"),
-                            downloadButton("download_estatisticas", "Baixar Resumo")
+                   tabPanel("Visualização no Mapa",
+                            leafletOutput("mapa_transicoes", height = 500)
                    )
                  )
                )
@@ -660,8 +573,10 @@ As análises espaciais foram conduzidas sob orientação do Dr. Ramon Felipe Bic
 A versão 1.0, criada em julho de 2025 para a Área de Proteção Ambiental de Campinas (APA de Campinas), teve como principal objetivo disponibilizar aos proprietários rurais e demais tomadores de decisão um banco de dados com informações capazes de orientar a priorização de esforços para a conservação e a recuperação de áreas de nascentes.",
                       style = "text-align: justify;"),
                tags$br(),
-               tags$p("Dúvidas e sugestões: henriquesccosta@gmail.com",
-                      style = "text-align: justify;")
+               tags$p("Dúvidas e sugestões:",
+                      style = "text-align: justify"),
+               tags$p("henriquesccosta@gmail.com",
+                      style = "text-align: justify")
              )
     )
   )
@@ -669,6 +584,22 @@ A versão 1.0, criada em julho de 2025 para a Área de Proteção Ambiental de C
 
 # --- LÓGICA DO SERVIDOR (SERVER) ---
 server <- function(input, output, session) {
+  # Carregamento de dados
+  shp_apa <- safe_load(file_paths$shp_apa, st_read, quiet = TRUE)
+  shp_car <- safe_load(file_paths$shp_car, st_read, quiet = TRUE)
+  shp_nascentes <- safe_load(file_paths$shp_nascentes, st_read, quiet = TRUE)
+  raster_2023 <- safe_load(file_paths$raster_2023, raster)
+  df_nascentes <- safe_load(file_paths$nascente_excel, read_excel)
+  
+  logos_img <- if(file.exists(file_paths$logos)) {
+    dataURI(file = file_paths$logos, mime = "image/jpeg")
+  } else {
+    warning("Arquivo de logos não encontrado", immediate. = TRUE)
+    NULL
+  }
+  
+  cores_mapbiomas <- parse_qml_colors(file_paths$qml)
+  
   # Dados reativos
   df <- reactive({
     if(is.null(df_nascentes)) {
@@ -697,7 +628,7 @@ server <- function(input, output, session) {
         fid_car = as.numeric(fid_car)
       )
     
-    dados
+    return(dados)
   })
   
   # Shapes reativos
@@ -880,7 +811,7 @@ server <- function(input, output, session) {
     if(is.null(shape_apa())) {
       return(leaflet() %>% 
                addProviderTiles("Esri.WorldTopoMap") %>%
-               setView(lng = -47.06, lat = -22.90, zoom = 11.8) %>%  # Aumentei o zoom para 11.8
+               setView(lng = -47.06, lat = -22.90, zoom = 11.8) %>%
                addControl("Dados da APA não disponíveis", position = "topright"))
     }
     
@@ -890,7 +821,7 @@ server <- function(input, output, session) {
     leaflet() %>%
       addProviderTiles("Esri.WorldTopoMap") %>%
       fitBounds(bounds[[1]], bounds[[2]], bounds[[3]], bounds[[4]]) %>%
-      setView(lng = center[1], lat = center[2], zoom = 11.2)  # Zoom inicial aumentado
+      setView(lng = center[1], lat = center[2], zoom = 11.2)
   })
   
   # --- Atualizações do Mapa ---
@@ -939,16 +870,14 @@ server <- function(input, output, session) {
       if (nrow(feicoes) > 0) {
         bbox <- st_bbox(feicoes)
         
-        # Calcula 40% do tamanho original do bounding box (zoom mais próximo)
         width <- bbox[3] - bbox[1]
         height <- bbox[4] - bbox[2]
         
-        # Reduz o tamanho do bounding box em 40%
         bbox_zoom <- bbox + c(
-          width * 0.2,  # Aumenta o limite esquerdo (20% de cada lado = 40% total)
-          height * 0.2, # Aumenta o limite inferior
-          -width * 0.2, # Diminui o limite direito
-          -height * 0.2 # Diminui o limite superior
+          width * 0.2,
+          height * 0.2,
+          -width * 0.2,
+          -height * 0.2
         )
         
         proxy %>% 
@@ -993,7 +922,6 @@ server <- function(input, output, session) {
       }
     }
     
-    # Destacar propriedade selecionada na aba identificação
     if(!is.null(input$prop_id_ident) && !is.na(input$prop_id_ident) && !is.null(shape_car())) {
       propriedade <- shape_car()[shape_car()$fid == input$prop_id_ident, ]
       if(nrow(propriedade) > 0) {
@@ -1114,7 +1042,6 @@ server <- function(input, output, session) {
         }
       }
       
-      # Adiciona propriedade destacada se houver
       if(!is.null(input$prop_id_ident) && !is.na(input$prop_id_ident) && !is.null(shape_car())) {
         propriedade <- shape_car()[shape_car()$fid == input$prop_id_ident, ]
         if(nrow(propriedade) > 0) {
@@ -1272,163 +1199,206 @@ server <- function(input, output, session) {
       tags$p("Nenhuma foto salva para esta nascente.")
     }
   })
-  
-  # Salvar dados
-  observeEvent(input$salvar_dados, {
-    if(!input$consentimento) {
-      showNotification("Por favor, marque o consentimento para salvar os dados.", type = "warning")
-      return()
-    }
-    
-    dados_salvar <- data.frame(
-      ID_Nascente = input$nascente_id_ident,
-      Nome_Nascente = input$nome_nascente,
-      Responsavel = input$responsavel,
-      Apoiador = input$apoiador,
-      Cercada = input$cercada,
-      Descricao = input$descricao,
-      Oportunidades = input$oportunidades,
-      Desafios = input$desafios,
-      Data_Registro = format(Sys.time(), "%Y-%m-%d %H:%M:%S"),
-      stringsAsFactors = FALSE
-    )
-    
-    file_name <- paste0("nascente_", input$nascente_id_ident, "_dados.csv")
-    write.csv(dados_salvar, file = file.path(file_paths$fotos_path, file_name), row.names = FALSE)
-    
-    if(!is.null(input$fotos_nascente)) {
-      old_photos <- list.files(
-        path = file_paths$fotos_path,
-        pattern = paste0("nascente_", input$nascente_id_ident, "_foto\\d+_.*\\.(jpg|jpeg|png)"),
-        full.names = TRUE
-      )
-      if(length(old_photos) > 0) file.remove(old_photos)
-      
-      sapply(1:nrow(input$fotos_nascente), function(i) {
-        file_ext <- tools::file_ext(input$fotos_nascente$name[i])
-        foto_nome <- paste0("nascente_", input$nascente_id_ident, "_foto", i, "_", 
-                            format(Sys.time(), "%Y%m%d_%H%M%S"), ".", file_ext)
-        file.copy(input$fotos_nascente$datapath[i], 
-                  file.path(file_paths$fotos_path, foto_nome))
-      })
-    }
-    
-    showModal(modalDialog(
-      title = "Sucesso",
-      "Dados e fotos salvos com sucesso!",
-      easyClose = TRUE,
-      footer = modalButton("Fechar")
-    ))
-    
-    # Atualiza a exibição das fotos
-    output$fotos_salvas_ui <- renderUI({
-      fotos <- list.files(
-        path = file_paths$fotos_path,
-        pattern = paste0("nascente_", input$nascente_id_ident, "_foto\\d+_.*\\.(jpg|jpeg|png)"),
-        full.names = TRUE
-      )
-      
-      if(length(fotos) > 0) {
-        tagList(
-          tags$h5("Fotos salvas:"),
-          tags$div(
-            class = "foto-container",
-            lapply(fotos, function(foto) {
-              tags$div(
-                tags$img(
-                  src = dataURI(file = foto, mime = "image/jpeg"), 
-                  class = "foto-thumbnail",
-                  onclick = paste0("window.open('", dataURI(file = foto, mime = "image/jpeg"), "', '_blank')")
-                )
-              )
-            })
-          )
-        )
-      } else {
-        tags$p("Nenhuma foto salva para esta nascente.")
-      }
-    })
-  })
-  
   # Output para transições
   output$resultado_transicoes <- renderUI({
     req(input$tipo_transicao)
     
     dados <- df()
-    if (nrow(dados) == 0) return(tags$p("Dados não disponíveis."))
+    if (!is.data.frame(dados) || nrow(dados) == 0) {
+      return(tags$p("Dados não disponíveis ou formato inválido."))
+    }
     
-    lista <- gerar_lista_transicoes(dados, input$tipo_transicao)
+    # Determina a coluna correta
+    coluna_transicao <- switch(input$tipo_transicao,
+                               "Formação Florestal Mantida" = "t1",
+                               "Formação Florestal Perdida" = "t2",
+                               "Regeneração de Formação Florestal" = "t4",
+                               "Aumento de Superfície de Água" = "t5")
     
-    # Obtém os IDs das nascentes ordenados
-    nasc_ids <- dados %>% 
-      arrange(desc(.[[switch(input$tipo_transicao,
-                             "Formação Florestal Mantida" = "t1",
-                             "Formação Florestal Perdida" = "t2",
-                             "Regeneração de Formação Florestal" = "t4",
-                             "Aumento de Superfície de Água" = "t5")]])) %>% 
-      pull(fid)
+    if (is.null(coluna_transicao)) {
+      return(tags$p("Tipo de transição inválido"))
+    }
     
-    # Cria um layout com lista e imagens lado a lado para cada nascente
+    if (!coluna_transicao %in% names(dados)) {
+      return(tags$p(paste("Coluna", coluna_transicao, "não encontrada nos dados")))
+    }
+    
+    # Filtra apenas as nascentes com valores na coluna selecionada
+    dados_filtrados <- dados %>% 
+      dplyr::filter(!is.na(.data[[coluna_transicao]]))
+    
+    if (nrow(dados_filtrados) == 0) {
+      return(tags$p(paste("Nenhuma nascente encontrada para transição do tipo:", input$tipo_transicao)))
+    }
+    
+    # Cria a UI com as imagens das nascentes
     tagList(
-      lapply(seq_along(lista), function(i) {
+      lapply(1:nrow(dados_filtrados), function(i) {
+        linha <- dados_filtrados[i, ]
         tagList(
           div(class = "transicao-container",
-              div(class = "transicao-imagem",  # Imagem primeiro (esquerda)
-                  render_transicao_image(nasc_ids[i], input$tipo_transicao)
+              div(class = "transicao-imagem",
+                  render_transicao_image(linha$fid)
               ),
-              div(class = "transicao-lista",  # Lista depois (direita)
-                  HTML(paste0("<pre>", lista[[i]], "</pre>"))
+              div(class = "transicao-lista",
+                  HTML(paste0("<pre>Nascente: ", linha$fid, "\n",
+                              "Propriedade(s): ", linha$fid_car, "\n",
+                              "Valor: ", round(linha[[coluna_transicao]], 2), "</pre>"))
               )
           ),
-          hr()
+          if (i < nrow(dados_filtrados)) hr()
         )
       })
     )
   })
   
-  # Output para classe predominante
-  output$resultado_classe <- renderUI({
-    req(input$classe_escolhida)
-    
-    classe_numerica <- switch(input$classe_escolhida,
-                              "Formação Florestal" = 3,
-                              "Floresta Plantada" = 9,
-                              "Campo Alagado e Área Pantanosa" = 11,
-                              "Pastagem" = 15,
-                              "Lavoura Temporária" = 19,
-                              "Mosaico de Usos" = 21,
-                              "Área Urbanizada" = 24,
-                              "Outras Áreas não Vegetadas" = 25,
-                              "Rio e Lago" = 33
-    )
-    
-    if (is.na(classe_numerica)) return(tags$p("Classe inválida."))
+  # Mapa para visualização das transições
+  output$mapa_transicoes <- renderLeaflet({
+    req(input$tipo_transicao)
     
     dados <- df()
-    if (nrow(dados) == 0) return(tags$p("Dados não disponíveis."))
+    if (!is.data.frame(dados) || nrow(dados) == 0) {
+      return(leaflet() %>% addTiles() %>% 
+               addControl("Dados não disponíveis", position = "topright"))
+    }
     
-    lista <- gerar_lista_predominancia(dados, classe_numerica)
-    HTML(paste0("<pre>", paste(lista, collapse = "\n\n"), "</pre>"))
-  })
-  
-  # Outputs adicionais
-  output$feicoes_predominantes <- renderDataTable({
-    datatable(data.frame(), options = list(pageLength = 5))
-  })
-  
-  output$grafico_classe <- renderPlotly({
-    plot_ly() %>% add_annotations(text = "Gráfico de exemplo", showarrow = FALSE)
-  })
-  
-  output$mapa_classe <- renderLeaflet({
-    leaflet() %>% addTiles() %>% setView(lng = -47.06, lat = -22.90, zoom = 11.5)
-  })
-  
-  output$plot_raster_viz <- renderPlot({
-    plot(1,1, type = "n", xlab = "", ylab = "", axes = FALSE)
-    text(1,1, "Visualização do raster aqui", cex = 1.5)
-  })
-}
+    coluna_transicao <- switch(input$tipo_transicao,
+                               "Formação Florestal Mantida" = "t1",
+                               "Formação Florestal Perdida" = "t2",
+                               "Regeneração de Formação Florestal" = "t4",
+                               "Aumento de Superfície de Água" = "t5")
+    
+    if (is.null(coluna_transicao)) return(NULL)
+    
+    dados_filtrados <- dados %>% 
+      filter(!is.na(.data[[coluna_transicao]]))
+    
+    if (nrow(dados_filtrados) == 0) {
+      return(leaflet() %>% addTiles() %>% 
+               addControl("Nenhuma nascente encontrada", position = "topright"))
+    }
+    
+    nascentes_filtradas <- shape_nascentes()[shape_nascentes()$fid %in% dados_filtrados$fid, ]
+    
+    if (is.null(nascentes_filtradas) || nrow(nascentes_filtradas) == 0) {
+      return(leaflet() %>% addTiles() %>% 
+               addControl("Nenhuma nascente encontrada", position = "topright"))
+    }
+    
+    pal <- colorNumeric(
+      palette = "viridis",
+      domain = dados_filtrados[[coluna_transicao]]
+    )
+    
+    leaflet(nascentes_filtradas) %>%
+      addProviderTiles("Esri.WorldTopoMap") %>%
+      addPolygons(
+        fillColor = ~pal(dados_filtrados[[coluna_transicao]]),
+        fillOpacity = 0.7,
+        color = "black",
+        weight = 1,
+        label = ~paste("Nascente:", fid, "| Valor:", 
+                       round(dados_filtrados[[coluna_transicao]], 2))
+      ) %>%
+      addLegend(
+        pal = pal,
+        values = dados_filtrados[[coluna_transicao]],
+        title = input$tipo_transicao
+      ) %>%
+      fitBounds(
+        lng1 = min(st_bbox(nascentes_filtradas)[["xmin"]]),
+        lat1 = min(st_bbox(nascentes_filtradas)[["ymin"]]),
+        lng2 = max(st_bbox(nascentes_filtradas)[["xmax"]]),
+        lat2 = max(st_bbox(nascentes_filtradas)[["ymax"]])
+      )
+    
+    # Output para classe predominante
+    output$resultado_classe <- renderUI({
+      req(input$classe_escolhida)
+      
+      classe_numerica <- switch(input$classe_escolhida,
+                                "Formação Florestal" = 3,
+                                "Floresta Plantada" = 9,
+                                "Campo Alagado e Área Pantanosa" = 11,
+                                "Pastagem" = 15,
+                                "Lavoura Temporária" = 19,
+                                "Mosaico de Usos" = 21,
+                                "Área Urbanizada" = 24,
+                                "Outras Áreas não Vegetadas" = 25,
+                                "Rio e Lago" = 33)
+      
+      if (is.na(classe_numerica)) return(tags$p("Classe inválida."))
+      
+      dados <- df()
+      if (nrow(dados) == 0) return(tags$p("Dados não disponíveis."))
+      
+      lista <- gerar_lista_predominancia(dados, classe_numerica)
+      HTML(paste0("<pre>", paste(lista, collapse = "\n\n"), "</pre>"))
+    })
+    
+    # Salvar dados
+    observeEvent(input$salvar_dados, {
+      if(!input$consentimento) {
+        showNotification("Por favor, marque o consentimento para salvar os dados.", type = "warning")
+        return()
+      }
+      
+      dados_salvar <- data.frame(
+        ID_Nascente = input$nascente_id_ident,
+        Nome_Nascente = input$nome_nascente,
+        Responsavel = input$responsavel,
+        Apoiador = input$apoiador,
+        Cercada = input$cercada,
+        Descricao = input$descricao,
+        Oportunidades = input$oportunidades,
+        Desafios = input$desafios,
+        Data_Registro = format(Sys.time(), "%Y-%m-%d %H:%M:%S"),
+        stringsAsFactors = FALSE
+      )
+      
+      file_name <- paste0("nascente_", input$nascente_id_ident, "_dados.csv")
+      write.csv(dados_salvar, file = file.path(file_paths$fotos_path, file_name), row.names = FALSE)
+      
+      if(!is.null(input$fotos_nascente)) {
+        old_photos <- list.files(
+          path = file_paths$fotos_path,
+          pattern = paste0("nascente_", input$nascente_id_ident, "_foto\\d+_.*\\.(jpg|jpeg|png)"),
+          full.names = TRUE
+        )
+        if(length(old_photos) > 0) file.remove(old_photos)
+        
+        sapply(1:nrow(input$fotos_nascente), function(i) {
+          file_ext <- tools::file_ext(input$fotos_nascente$name[i])
+          foto_nome <- paste0("nascente_", input$nascente_id_ident, "_foto", i, "_", 
+                              format(Sys.time(), "%Y%m%d_%H%M%S"), ".", file_ext)
+          file.copy(input$fotos_nascente$datapath[i], 
+                    file.path(file_paths$fotos_path, foto_nome))
+        })
+      }
+      
+      showModal(modalDialog(
+        title = "Sucesso",
+        "Dados e fotos salvos com sucesso!",
+        easyClose = TRUE,
+        footer = modalButton("Fechar")
+      ))
+    })
+    
+    # Outputs adicionais
+    output$feicoes_predominantes <- renderDataTable({
+      datatable(data.frame(), options = list(pageLength = 5))
+    })
+    
+    output$grafico_classe <- renderPlotly({
+      plot_ly() %>% add_annotations(text = "Gráfico de exemplo", showarrow = FALSE)
+    })
+    
+    output$plot_raster_viz <- renderPlot({
+      plot(1,1, type = "n", xlab = "", ylab = "", axes = FALSE)
+      text(1,1, "Visualização do raster aqui", cex = 1.5)
+    })
+  }) # Este fecha o renderLeaflet do mapa_transicoes
+} # Este fecha a função server
 
 # --- EXECUÇÃO DO APLICATIVO ---
 shinyApp(ui, server)
