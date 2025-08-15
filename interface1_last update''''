@@ -51,7 +51,7 @@ carregar_imagem_transicao <- function(nasc_id) {
   
   tryCatch({
     # Lê a imagem
-    img <- image_read(caminho_arquivo) %>% image_scale("150x")
+    img <- image_read(caminho_arquivo) %>% image_scale("50x")
     
     # Cria um arquivo temporário para salvar a imagem
     tmp_file <- tempfile(fileext = ".png")
@@ -142,10 +142,10 @@ gerar_lista_predominancia <- function(df, classe_escolhida) {
 gerar_lista_transicoes <- function(df, tipo_transicao) {
   # Mapeamento de tipos de transição para colunas
   mapeamento_transicoes <- list(
-    "Formação Florestal Mantida" = "%_t1",
-    "Formação Florestal Perdida" = "%_t2",
-    "Regeneração de Formação Florestal" = "%_t4",
-    "Aumento de Superfície de Água" = "%_t5"
+    "Formação Florestal Mantida" = "t1",
+    "Formação Florestal Perdida" = "t2",
+    "Regeneração de Formação Florestal" = "t4",
+    "Aumento de Superfície de Água" = "t5"
   )
   
   if (!tipo_transicao %in% names(mapeamento_transicoes)) {
@@ -604,7 +604,7 @@ ui <- fluidPage(
              )
     ),
     
-    tabPanel("Transições 2022-2023",
+    tabPanel("Transições 2018-2023",
              sidebarLayout(
                sidebarPanel(
                  selectInput("tipo_transicao", "Tipo de Transição:",
@@ -615,7 +615,6 @@ ui <- fluidPage(
                              selected = "Formação Florestal Mantida")
                ),
                mainPanel(
-                 tags$h4("Nascentes com Transição Selecionada"),
                  uiOutput("resultado_transicoes")
                )
              )
@@ -669,11 +668,19 @@ ui <- fluidPage(
              fluidPage(
                tags$br(), tags$br(),
                tags$h4("Observatório das Nascentes 1.0", style = "text-align: left; margin-bottom: 30px;"),
-               tags$p("Este aplicativo de código aberto foi desenvolvido no contexto da tese de doutorado de Henrique Simões de Carvalho Costa, orientado no Programa Ambiente & Sociedade por Drª Simone Aparecida Vieira e Drª Cristiana Simão Seixas, ambas do Laboratório de Ecologia e Manejo de Ecossistemas (LEME). As análises espaciais foram orientadas pelo Dr. Ramon Felipe Bicudo da Silva do Laboratório de Análises Espaciais, Conservação Ambiental e Sustentabilidade (LAECAS) e integram atividades referentes ao Treinamento Técnico como bolsista FAPESP no processo nº................ . A versão 1.0, criada em julho de 2025 para a Área de Proteção Ambiental de Campinas (APA de Campinas), teve como principal propósito apresentar aos proprietários rurais e demais tomadores de decisão um banco de dados com informações que orientem a priorização de esforços para conservação e recuperação de áreas de nascentes.",
+               tags$p("Este aplicativo de código aberto foi desenvolvido no âmbito da tese de doutorado de Henrique Simões de Carvalho Costa, conduzida no Programa Ambiente & Sociedade, sob orientação da Dra. Simone Aparecida Vieira e da Dra. Cristiana Simão Seixas, ambas vinculadas ao Laboratório de Ecologia e Manejo de Ecossistemas (LEME).
+
+A proposta de trabalho foi aprovada pelo Conselho de Ética em Pesquisa da UNICAMP / Plataforma Brasil (CAAE: 63225722.8.0000.8142) e recebeu financiamento da Coordenação de Aperfeiçoamento de Pessoal de Nível Superior (CAPES), por meio de bolsa PROEX (Programa de Excelência Acadêmica), no período de 1º de abril de 2020 a 31 de março de 2024 (Processo nº 88887.502943/2020-00).
+
+As análises espaciais foram conduzidas sob orientação do Dr. Ramon Felipe Bicudo da Silva, do Laboratório de Análises Espaciais, Conservação Ambiental e Sustentabilidade (LAECAS), integrando atividades de Treinamento Técnico com bolsa FAPESP (Processo nº 2024/17486-8).
+
+A versão 1.0, criada em julho de 2025 para a Área de Proteção Ambiental de Campinas (APA de Campinas), teve como principal objetivo disponibilizar aos proprietários rurais e demais tomadores de decisão um banco de dados com informações capazes de orientar a priorização de esforços para a conservação e a recuperação de áreas de nascentes.",
                       style = "text-align: justify;"),
                tags$br(),
-               tags$p("Dúvidas e sugestões podem ser enviadas pelo e-mail: henriquesccosta@gmail.com",
-                      style = "text-align: justify; font-weight: bold;")
+               tags$p("Dúvidas e sugestões:",
+                      style = "text-align: justify"),
+               tags$p("henriquesccosta@gmail.com",
+                      style = "text-align: justify")
              )
     )
   )
