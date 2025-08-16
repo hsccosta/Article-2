@@ -71,8 +71,9 @@ carregar_imagem_transicao <- function(nasc_id) {
   })
 }
 
-# --- FUNÇÃO PARA GERAR LISTA DE PREDOMINÂNCIA ---
+# --- FUNÇÃO PARA GERAR LISTA DE PREDOMINÂNCIA (CORRIGIDA) ---
 gerar_lista_predominancia <- function(df, classe_escolhida) {
+  # Mapeamento de classes numéricas para nomes
   classe_nomes <- c(
     "3" = "Formação Florestal",
     "9" = "Floresta Plantada",
@@ -85,30 +86,62 @@ gerar_lista_predominancia <- function(df, classe_escolhida) {
     "33" = "Rio e Lago"
   )
   
+  # Verifica se a classe escolhida existe no mapeamento
+  if(!as.character(classe_escolhida) %in% names(classe_nomes)) {
+    return(list("Classe inválida ou não mapeada"))
+  }
+  
+  # Encontra as colunas de porcentagem (ajuste conforme seus dados)
   colunas_pct <- grep("^%_", names(df), value = TRUE)
   
-  df$classe_predominante <- apply(df[, colunas_pct], 1, function(x) {
+  if(length(colunas_pct) == 0) {
+    return(list("Nenhuma coluna de porcentagem encontrada nos dados"))
+  }
+  
+  # Determina a classe predominante para cada linha, tratando NAs
+  df$classe_predominante <- apply(df[, colunas_pct, drop = FALSE], 1, function(x) {
+    if(all(is.na(x))) return(NA)
     as.numeric(gsub("%_", "", names(x)[which.max(x)]))
   })
   
-  df_filtrado <- df[df$classe_predominante == classe_escolhida, ]
-  col_classe <- paste0("%_", classe_escolhida)
-  df_filtrado <- df_filtrado[order(-df_filtrado[[col_classe]]), ]
+  # Remove linhas com NA na classe predominante
+  df <- df[!is.na(df$classe_predominante), ]
   
+  # Filtra as linhas com a classe escolhida como predominante
+  df_filtrado <- df[df$classe_predominante == classe_escolhida, ]
+  
+  if(nrow(df_filtrado) == 0) {
+    return(list(paste("Nenhuma nascente encontrada com a classe", 
+                      classe_nomes[as.character(classe_escolhida)], 
+                      "como predominante")))
+  }
+  
+  # Ordena pela porcentagem da classe escolhida (decrescente)
+  col_classe <- paste0("%_", classe_escolhida)
+  df_filtrado <- df_filtrado[order(-df_filtrado[[col_classe]], na.last = TRUE), ]
+  
+  # Prepara a lista de resultados
   lista_resultado <- vector("list", nrow(df_filtrado))
   
   for (i in seq_len(nrow(df_filtrado))) {
     linha <- df_filtrado[i, ]
-    propriedades <- paste(unique(linha$fid_car), collapse = ", ") # Mostra os fid_car
     
-    outras_classes <- linha[, colunas_pct[!colunas_pct %in% col_classe, drop = FALSE]]
+    # Trata propriedades (fid_car)
+    propriedades <- if(!is.null(linha$fid_car) && !is.na(linha$fid_car)) {
+      paste(unique(linha$fid_car), collapse = ", ")
+    } else {
+      "N/A"
+    }
     
+    # Obtém outras classes com porcentagem > 0, tratando NAs
+    outras_classes <- linha[, setdiff(colunas_pct, col_classe), drop = FALSE]
     outras_linhas <- sapply(names(outras_classes), function(col) {
-      valor <- as.numeric(linha[[col]])
-      if (valor > 0) {
+      valor <- suppressWarnings(as.numeric(linha[[col]]))
+      if (!is.na(valor) && valor > 0) {
         num_classe <- gsub("%_", "", col)
-        nome_classe <- classe_nomes[num_classe]
-        if (is.na(nome_classe)) nome_classe <- paste("Classe Desconhecida (", num_classe, ")", sep = "")
+        nome_classe <- ifelse(num_classe %in% names(classe_nomes),
+                              classe_nomes[num_classe],
+                              paste("Classe Desconhecida (", num_classe, ")", sep = ""))
         sprintf("   - %s: %d%%", nome_classe, round(valor))
       } else {
         NULL
@@ -122,13 +155,15 @@ gerar_lista_predominancia <- function(df, classe_escolhida) {
     }
     
     nome_classe_pred <- classe_nomes[as.character(classe_escolhida)]
-    if (is.na(nome_classe_pred)) nome_classe_pred <- paste("Classe Desconhecida (", classe_escolhida, ")", sep = "")
+    
+    # Garante que a porcentagem não seja NA
+    pct_classe <- ifelse(is.na(linha[[col_classe]]), "NA", round(linha[[col_classe]]))
     
     item_principal <- paste0(
-      i, ". Nascente: ", linha$fid, "\n",
+      i, ". Nascente: ", ifelse(is.na(linha$fid), "N/A", linha$fid), "\n",
       "   Propriedade(s): ", propriedades, "\n",
       "   Classe predominante: ", nome_classe_pred, 
-      " (", round(linha[[col_classe]]), "%)\n",
+      " (", pct_classe, "%)\n",
       "   Outras classes:\n"
     )
     
@@ -628,10 +663,19 @@ ui <- fluidPage(
     tabPanel("Classe Predominante",
              sidebarLayout(
                sidebarPanel(
-                 selectInput("classe_escolhida", "Classe de Interesse:",
-                             choices = c("Formação Florestal", "Floresta Plantada", "Pastagem",
-                                         "Mosaico de Usos", "Cultura Temporária", "Rios e Lagos",
-                                         "Área Urbanizada", "Campo Alagado e Pantanoso", "Não Observado"))
+                 selectInput("classe_escolhida", "Classe de Uso e Cobertura da Terra:",
+                             choices = c("Formação Florestal" = 3,
+                                         "Floresta Plantada" = 9,
+                                         "Campo Alagado e Área Pantanosa" = 11,
+                                         "Pastagem" = 15,
+                                         "Lavoura Temporária" = 19,
+                                         "Mosaico de Usos" = 21,
+                                         "Área Urbanizada" = 24,
+                                         "Outras Áreas não Vegetadas" = 25,
+                                         "Rio e Lago" = 33),
+                             selected = 3),
+                 tags$hr(),
+                 legenda_lulc()
                ),
                mainPanel(
                  tags$h4("Nascentes com Classe Predominante Selecionada"),
@@ -1439,25 +1483,24 @@ server <- function(input, output, session) {
   output$resultado_classe <- renderUI({
     req(input$classe_escolhida)
     
-    classe_numerica <- switch(input$classe_escolhida,
-                              "Formação Florestal" = 3,
-                              "Floresta Plantada" = 9,
-                              "Campo Alagado e Área Pantanosa" = 11,
-                              "Pastagem" = 15,
-                              "Lavoura Temporária" = 19,
-                              "Mosaico de Usos" = 21,
-                              "Área Urbanizada" = 24,
-                              "Outras Áreas não Vegetadas" = 25,
-                              "Rio e Lago" = 33
-    )
-    
-    if (is.na(classe_numerica)) return(tags$p("Classe inválida."))
-    
     dados <- df()
     if (nrow(dados) == 0) return(tags$p("Dados não disponíveis."))
     
-    lista <- gerar_lista_predominancia(dados, classe_numerica)
-    HTML(paste0("<pre>", paste(lista, collapse = "\n\n"), "</pre>"))
+    lista <- gerar_lista_predominancia(dados, as.numeric(input$classe_escolhida))
+    
+    if(length(lista) == 1 && grepl("Nenhuma nascente encontrada", lista[[1]])) {
+      return(tags$div(class = "alert alert-info", lista[[1]]))
+    }
+    
+    tagList(
+      tags$div(
+        style = "margin-bottom: 20px;",
+        tags$strong(paste("Total de nascentes com esta classe predominante:", length(lista)))
+      ),
+      lapply(lista, function(item) {
+        tags$pre(item)
+      })
+    )
   })
   
   # Outputs adicionais
