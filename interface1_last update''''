@@ -51,7 +51,7 @@ carregar_imagem_transicao <- function(nasc_id) {
   
   tryCatch({
     # Lê a imagem
-    img <- image_read(caminho_arquivo) %>% image_scale("50x")
+    img <- image_read(caminho_arquivo) %>% image_scale("70x")
     
     # Cria um arquivo temporário para salvar a imagem
     tmp_file <- tempfile(fileext = ".png")
