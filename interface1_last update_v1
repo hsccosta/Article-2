@@ -144,8 +144,8 @@ gerar_lista_transicoes <- function(df, tipo_transicao) {
   mapeamento_transicoes <- list(
     "Formação Florestal Mantida" = "t1",
     "Formação Florestal Perdida" = "t2",
-    "Regeneração de Formação Florestal" = "t4",
-    "Aumento de Superfície de Água" = "t5"
+    "Recuperação de Formação Florestal" = "t4",  # Alterado de "Regeneração" para "Recuperação"
+    "Ganho de Superfície de Água" = "t5"  # Alterado de "Aumento" para "Ganho"
   )
   
   if (!tipo_transicao %in% names(mapeamento_transicoes)) {
@@ -331,6 +331,34 @@ legenda_lulc <- function() {
   
   tags$div(
     tags$h5(class = "titulo-legenda", "Classes de Uso e Cobertura da Terra"),
+    tags$ul(
+      style = "list-style: none; padding-left: 0;",
+      lapply(1:nrow(classes), function(i) {
+        tags$li(
+          tags$span(style = paste0(
+            "display:inline-block; width: 18px; height: 18px; ",
+            "background-color:", classes$cor[i], "; ",
+            "margin-right: 8px; border: 1px solid #555;"
+          )),
+          tags$span(class = "classe-legenda", classes$nome[i])
+        )
+      })
+    )
+  )
+}
+
+# --- FUNÇÃO PARA GERAR LEGENDA DE TRANSIÇÕES ---
+legenda_transicoes <- function() {
+  classes <- data.frame(
+    nome = c("Formação Florestal Mantida", 
+             "Formação Florestal Perdida",
+             "Recuperação de Formação Florestal",
+             "Ganho de Superfície de Água"),
+    cor = c("#1f8d49", "#ff0000", "#06ff00", "#4169e1")
+  )
+  
+  tags$div(
+    tags$h5(class = "titulo-legenda", "Transições 2018-2023"),
     tags$ul(
       style = "list-style: none; padding-left: 0;",
       lapply(1:nrow(classes), function(i) {
@@ -615,12 +643,14 @@ ui <- fluidPage(
     tabPanel("Transições 2018-2023",
              sidebarLayout(
                sidebarPanel(
-                 selectInput("tipo_transicao", "Tipo de Transição:",
+                 selectInput("tipo_transicao", "",
                              choices = c("Formação Florestal Mantida",
                                          "Formação Florestal Perdida",
-                                         "Regeneração de Formação Florestal",
-                                         "Aumento de Superfície de Água"),
-                             selected = "Formação Florestal Mantida")
+                                         "Recuperação de Formação Florestal",
+                                         "Ganho de Superfície de Água"),
+                             selected = "Formação Florestal Mantida"),
+                 tags$hr(),  # Adicione esta linha para separar os elementos
+                 legenda_transicoes()  # Adicione esta linha para incluir a legenda
                ),
                mainPanel(
                  uiOutput("resultado_transicoes")
@@ -1399,7 +1429,7 @@ server <- function(input, output, session) {
     tagList(
       tags$div(
         style = "margin-bottom: 20px;",
-        tags$strong(paste("Total de nascentes com esta transição:", length(lista)))
+        tags$strong(paste("Nascentes com esta transição:", length(lista)))
       ),
       lista
     )
