@@ -71,12 +71,13 @@ carregar_imagem_transicao <- function(nasc_id) {
   })
 }
 
-# --- FUNÇÃO PARA GERAR LISTA DE PREDOMINÂNCIA (CORRIGIDA) ---
+# --- FUNÇÃO PARA GERAR LISTA DE PREDOMINÂNCIA (VERSÃO FINAL AJUSTADA) ---
 gerar_lista_predominancia <- function(df, classe_escolhida) {
+  
   # Mapeamento de classes numéricas para nomes
   classe_nomes <- c(
-    "3" = "Formação Florestal",
-    "9" = "Floresta Plantada",
+    "3"  = "Formação Florestal",
+    "9"  = "Floresta Plantada",
     "11" = "Campo Alagado e Área Pantanosa",
     "15" = "Pastagem",
     "19" = "Lavoura Temporária",
@@ -88,90 +89,105 @@ gerar_lista_predominancia <- function(df, classe_escolhida) {
   
   # Verifica se a classe escolhida existe no mapeamento
   if(!as.character(classe_escolhida) %in% names(classe_nomes)) {
-    return(list("Classe inválida ou não mapeada"))
+    return("Classe inválida ou não mapeada")
   }
   
-  # Encontra as colunas de porcentagem (ajuste conforme seus dados)
-  colunas_pct <- grep("^%_", names(df), value = TRUE)
-  
+  # Encontra TODAS as colunas de porcentagem (%_número)
+  colunas_pct <- grep("^%_\\d+$", names(df), value = TRUE)
   if(length(colunas_pct) == 0) {
-    return(list("Nenhuma coluna de porcentagem encontrada nos dados"))
+    return("Nenhuma coluna de porcentagem encontrada nos dados")
   }
   
-  # Determina a classe predominante para cada linha, tratando NAs
-  df$classe_predominante <- apply(df[, colunas_pct, drop = FALSE], 1, function(x) {
-    if(all(is.na(x))) return(NA)
-    as.numeric(gsub("%_", "", names(x)[which.max(x)]))
-  })
+  # Coluna específica da classe escolhida
+  col_classe <- paste0("%_", classe_escolhida)
   
-  # Remove linhas com NA na classe predominante
-  df <- df[!is.na(df$classe_predominante), ]
+  # Verifica se a coluna da classe escolhida existe
+  if(!col_classe %in% colunas_pct) {
+    return(paste("Dados de porcentagem não disponíveis para a classe",
+                 classe_nomes[as.character(classe_escolhida)]))
+  }
   
-  # Filtra as linhas com a classe escolhida como predominante
-  df_filtrado <- df[df$classe_predominante == classe_escolhida, ]
+  # Filtra linhas em que a classe é estritamente predominante
+  df_filtrado <- df %>%
+    filter(!is.na(.data[[col_classe]])) %>%
+    rowwise() %>%
+    filter({
+      valores <- c_across(all_of(colunas_pct))
+      max_val <- max(valores, na.rm = TRUE)
+      .data[[col_classe]] == max_val && sum(valores == max_val, na.rm = TRUE) == 1
+    }) %>%
+    ungroup()
   
   if(nrow(df_filtrado) == 0) {
-    return(list(paste("Nenhuma nascente encontrada com a classe", 
-                      classe_nomes[as.character(classe_escolhida)], 
-                      "como predominante")))
+    return(paste("Nenhuma nascente encontrada com",
+                 classe_nomes[as.character(classe_escolhida)],
+                 "como classe estritamente predominante"))
   }
   
   # Ordena pela porcentagem da classe escolhida (decrescente)
-  col_classe <- paste0("%_", classe_escolhida)
-  df_filtrado <- df_filtrado[order(-df_filtrado[[col_classe]], na.last = TRUE), ]
+  df_filtrado <- df_filtrado %>% arrange(desc(.data[[col_classe]]))
   
-  # Prepara a lista de resultados
+  # Prepara lista de resultados
   lista_resultado <- vector("list", nrow(df_filtrado))
   
   for (i in seq_len(nrow(df_filtrado))) {
     linha <- df_filtrado[i, ]
     
-    # Trata propriedades (fid_car)
+    # Propriedades (fid_car)
     propriedades <- if(!is.null(linha$fid_car) && !is.na(linha$fid_car)) {
       paste(unique(linha$fid_car), collapse = ", ")
     } else {
       "N/A"
     }
     
-    # Obtém outras classes com porcentagem > 0, tratando NAs
-    outras_classes <- linha[, setdiff(colunas_pct, col_classe), drop = FALSE]
-    outras_linhas <- sapply(names(outras_classes), function(col) {
+    # Coleta todas as classes presentes
+    classes_presentes <- linha[, colunas_pct, drop = FALSE]
+    
+    classes_info <- lapply(names(classes_presentes), function(col) {
       valor <- suppressWarnings(as.numeric(linha[[col]]))
       if (!is.na(valor) && valor > 0) {
         num_classe <- gsub("%_", "", col)
         nome_classe <- ifelse(num_classe %in% names(classe_nomes),
                               classe_nomes[num_classe],
-                              paste("Classe Desconhecida (", num_classe, ")", sep = ""))
-        sprintf("   - %s: %d%%", nome_classe, round(valor))
-      } else {
-        NULL
-      }
+                              paste0("Classe Desconhecida (", num_classe, ")"))
+        list(nome = nome_classe, valor = round(valor))
+      } else NULL
     })
     
-    outras_linhas <- unlist(outras_linhas[!sapply(outras_linhas, is.null)])
+    # Remove nulos e ordena
+    classes_info <- Filter(Negate(is.null), classes_info)
+    classes_info <- classes_info[order(sapply(classes_info, function(x) -x$valor))]
     
-    if (length(outras_linhas) == 0) {
-      outras_linhas <- "   - Nenhuma outra classe com porcentagem > 0%"
+    # Outras classes além da predominante
+    outras_classes <- sapply(classes_info, function(x) {
+      if(x$nome != classe_nomes[as.character(classe_escolhida)]) {
+        sprintf(" - %s: %d%%", x$nome, x$valor)
+      } else NULL
+    })
+    outras_classes <- outras_classes[!is.na(outras_classes)]
+    
+    if(length(outras_classes) == 0) {
+      outras_classes <- " - Nenhuma outra classe com porcentagem > 0%"
     }
     
-    nome_classe_pred <- classe_nomes[as.character(classe_escolhida)]
-    
-    # Garante que a porcentagem não seja NA
-    pct_classe <- ifelse(is.na(linha[[col_classe]]), "NA", round(linha[[col_classe]]))
+    # Porcentagem da classe predominante
+    pct_classe <- round(linha[[col_classe]])
     
     item_principal <- paste0(
       i, ". Nascente: ", ifelse(is.na(linha$fid), "N/A", linha$fid), "\n",
-      "   Propriedade(s): ", propriedades, "\n",
-      "   Classe predominante: ", nome_classe_pred, 
+      " Propriedade(s): ", propriedades, "\n",
+      " Classe predominante: ", classe_nomes[as.character(classe_escolhida)],
       " (", pct_classe, "%)\n",
-      "   Outras classes:\n"
+      " Outras classes presentes:\n",
+      paste(outras_classes, collapse = "\n")
     )
     
-    lista_resultado[[i]] <- paste0(item_principal, paste(outras_linhas, collapse = "\n"))
+    lista_resultado[[i]] <- item_principal
   }
   
   return(lista_resultado)
 }
+
 
 # --- FUNÇÃO PARA GERAR LISTA DE TRANSIÇÕES (AJUSTADA) ---
 gerar_lista_transicoes <- function(df, tipo_transicao) {
