@@ -1,0 +1,1542 @@
+# --- REQUIRED LIBRARIES ---
+library(shiny)
+library(readxl)
+library(magick)
+library(base64enc)
+library(raster)
+library(sf)
+library(leaflet)
+library(dplyr)
+library(ggplot2)
+library(plotly)
+library(tidyr)
+library(tools)
+library(xml2)
+library(shinydashboard)
+library(mapview)
+library(webshot2)
+
+# --- INITIAL CONFIGURATION ---
+base_path <- "C:/Users/DELL/Desktop/Artigo 2_TC/Arquivos ArcGis/LULC_GDEs_50m/Interface_Observatório das Nascentes"
+transicao_path <- file.path(base_path, "transição/transição_2018-2023/PNG_Saida")
+
+# --- PACKAGE VERIFICATION ---
+required_packages <- c(
+  "shiny", "readxl", "magick", "base64enc", "raster", "sf", "leaflet",
+  "dplyr", "ggplot2", "plotly", "tidyr", "tools", "xml2", "shinydashboard",
+  "mapview", "webshot2"
+)
+
+suppressMessages({
+  missing_packages <- required_packages[!required_packages %in% installed.packages()[,"Package"]]
+  if(length(missing_packages) > 0) install.packages(missing_packages, quiet = TRUE)
+  invisible(lapply(required_packages, library, character.only = TRUE))
+})
+
+# --- FUNCTION TO LOAD TRANSITION IMAGE ---
+carregar_imagem_transicao <- function(nasc_id) {
+  # Ensures the spring ID has 4 digits, padding with leading zeros
+  nasc_id_formatado <- sprintf("%04d", as.numeric(nasc_id))
+  
+  # The file pattern now searches for the exact name, e.g., "0001.png"
+  nome_arquivo <- paste0(nasc_id_formatado, ".png")
+  
+  # Creates the complete file path
+  caminho_arquivo <- file.path(transicao_path, nome_arquivo)
+  
+  # Verifies if the file exists in the specified path
+  if (!file.exists(caminho_arquivo)) {
+    return(NULL)
+  }
+  
+  tryCatch({
+    # Reads the image
+    img <- image_read(caminho_arquivo) %>% image_scale("70x")
+    
+    # Creates a temporary file to save the image
+    tmp_file <- tempfile(fileext = ".png")
+    image_write(img, tmp_file)
+    
+    # Converts the file to a Base64 URI
+    uri <- base64enc::dataURI(file = tmp_file, mime = "image/png")
+    
+    # Deletes the temporary file
+    unlink(tmp_file)
+    
+    # Returns the URI
+    return(uri)
+  }, error = function(e) {
+    warning(paste("Error loading transition image for ID", nasc_id, ":", e$message))
+    return(NULL)
+  })
+}
+
+# --- FUNCTION TO GENERATE PREDOMINANCE LIST (FINAL ADJUSTED VERSION) ---
+gerar_lista_predominancia <- function(df, classe_escolhida) {
+  
+  # Mapping of numeric classes to names
+  classe_nomes <- c(
+    "3"  = "Forest Formation",
+    "9"  = "Forest Plantation",
+    "11" = "Wetland",
+    "15" = "Pasture",
+    "19" = "Temporary Crop",
+    "21" = "Mosaic of Uses",
+    "24" = "Urban Area",
+    "25" = "Other Non-Vegetated Areas",
+    "33" = "River and Lake"
+  )
+  
+  # Verifies if the chosen class exists in the mapping
+  if(!as.character(classe_escolhida) %in% names(classe_nomes)) {
+    return("Invalid or unmapped class")
+  }
+  
+  # Finds ALL percentage columns (%_number)
+  colunas_pct <- grep("^%_\\d+$", names(df), value = TRUE)
+  if(length(colunas_pct) == 0) {
+    return("No percentage columns found in the data")
+  }
+  
+  # Specific column for the chosen class
+  col_classe <- paste0("%_", classe_escolhida)
+  
+  # Verifies if the column for the chosen class exists
+  if(!col_classe %in% colunas_pct) {
+    return(paste("Percentage data not available for class",
+                 classe_nomes[as.character(classe_escolhida)]))
+  }
+  
+  # Filters rows where the class is strictly predominant
+  df_filtrado <- df %>%
+    filter(!is.na(.data[[col_classe]])) %>%
+    rowwise() %>%
+    filter({
+      valores <- c_across(all_of(colunas_pct))
+      max_val <- max(valores, na.rm = TRUE)
+      .data[[col_classe]] == max_val && sum(valores == max_val, na.rm = TRUE) == 1
+    }) %>%
+    ungroup()
+  
+  if(nrow(df_filtrado) == 0) {
+    return(paste("No springs found with",
+                 classe_nomes[as.character(classe_escolhida)],
+                 "as the strictly predominant class"))
+  }
+  
+  # Sorts by the percentage of the chosen class (descending)
+  df_filtrado <- df_filtrado %>% arrange(desc(.data[[col_classe]]))
+  
+  # Prepares result list
+  lista_resultado <- vector("list", nrow(df_filtrado))
+  
+  for (i in seq_len(nrow(df_filtrado))) {
+    linha <- df_filtrado[i, ]
+    
+    # Properties (fid_car)
+    propriedades <- if(!is.null(linha$fid_car) && !is.na(linha$fid_car)) {
+      paste(unique(linha$fid_car), collapse = ", ")
+    } else {
+      "N/A"
+    }
+    
+    # Collects all present classes
+    classes_presentes <- linha[, colunas_pct, drop = FALSE]
+    
+    classes_info <- lapply(names(classes_presentes), function(col) {
+      valor <- suppressWarnings(as.numeric(linha[[col]]))
+      if (!is.na(valor) && valor > 0) {
+        num_classe <- gsub("%_", "", col)
+        nome_classe <- ifelse(num_classe %in% names(classe_nomes),
+                              classe_nomes[num_classe],
+                              paste0("Unknown Class (", num_classe, ")"))
+        list(nome = nome_classe, valor = round(valor))
+      } else NULL
+    })
+    
+    # Removes nulls and sorts
+    classes_info <- Filter(Negate(is.null), classes_info)
+    classes_info <- classes_info[order(sapply(classes_info, function(x) -x$valor))]
+    
+    # Other classes besides the predominant one
+    outras_classes <- sapply(classes_info, function(x) {
+      if(x$nome != classe_nomes[as.character(classe_escolhida)]) {
+        sprintf(" - %s: %d%%", x$nome, x$valor)
+      } else NULL
+    })
+    outras_classes <- outras_classes[!is.na(outras_classes)]
+    
+    if(length(outras_classes) == 0) {
+      outras_classes <- " - No other class with percentage > 0%"
+    }
+    
+    # Percentage of the predominant class
+    pct_classe <- round(linha[[col_classe]])
+    
+    item_principal <- paste0(
+      i, ". Spring: ", ifelse(is.na(linha$fid), "N/A", linha$fid), "\n",
+      " Property(ies): ", propriedades, "\n",
+      " Predominant class: ", classe_nomes[as.character(classe_escolhida)],
+      " (", pct_classe, "%)\n",
+      " Other present classes:\n",
+      paste(outras_classes, collapse = "\n")
+    )
+    
+    lista_resultado[[i]] <- item_principal
+  }
+  
+  return(lista_resultado)
+}
+
+
+# --- FUNCTION TO GENERATE TRANSITIONS LIST (ADJUSTED) ---
+gerar_lista_transicoes <- function(df, tipo_transicao) {
+  # Mapping of transition types to columns
+  mapeamento_transicoes <- list(
+    "Forest Formation Maintained" = "t1",
+    "Forest Formation Lost" = "t2",
+    "Forest Formation Recovery" = "t4",  # Changed from "Regeneration" to "Recovery"
+    "Water Surface Gain" = "t5"  # Changed from "Increase" to "Gain"
+  )
+  
+  if (!tipo_transicao %in% names(mapeamento_transicoes)) {
+    return(list("Invalid transition type"))
+  }
+  
+  coluna_pct <- mapeamento_transicoes[[tipo_transicao]]
+  
+  # Predefined lists of springs for each transition type
+  listas_nascentes <- list(
+    t1 = c(520, 522, 385, 650, 685, 439, 700, 727, 353, 729, 989, 1172, 979, 578, 247, 638, 134, 521, 829, 220, 346, 733, 301, 351, 1015, 77, 1305, 1200, 198, 132, 490, 400, 908, 985, 231, 392, 470, 1326, 811, 516, 699, 151, 487, 628, 550, 706, 839, 698, 362, 458, 735, 137, 988, 352, 230, 1229, 1012, 462, 373, 1191, 331, 406, 513, 918, 1106, 356, 631, 978, 697, 824, 355, 595, 1176, 844, 251, 605, 519, 386, 660, 976, 239, 38, 491, 388, 987, 297, 1161, 474, 1199, 715, 1173, 651, 980, 1177, 984, 434, 125, 542, 354, 293, 1144, 1165, 476, 662, 359, 704, 120, 241, 577, 921, 613, 822, 737, 475, 823, 149, 1124, 957, 599, 545, 910, 1196, 977, 672, 396, 940, 363, 486, 334, 612, 878, 1043, 489, 909, 138, 1175, 751, 1063, 709, 982, 240, 156, 726, 1198, 133, 732, 391, 397, 389, 399, 480, 830, 671, 518, 708, 710, 292, 413, 546, 1174, 778, 437, 232, 560, 986, 942, 543, 1066, 808, 508, 983, 736, 889, 753, 1169, 603, 718, 705, 88, 1192, 427, 776, 390, 754, 1237, 923, 357, 1086, 311, 264, 484, 832, 624, 1195, 607, 739, 269, 636, 310, 243, 547, 432, 517, 335, 828, 746, 426, 384, 336, 1044, 208, 594, 835, 655, 374, 713, 707, 452, 618, 701, 235, 818, 752, 716, 712, 236, 774, 350, 1020, 252, 648, 836, 831, 367, 221, 897, 1045, 652, 793, 1110, 364, 234, 748, 693, 600, 657, 290, 821, 834, 1128, 892, 663, 199, 538, 526, 225, 394, 579, 536, 809, 59, 812, 1112, 859, 246, 876, 827, 108, 565, 377, 939, 549, 1170, 223, 248, 981, 649, 845, 1013, 1292, 58, 260, 941, 750, 960, 1021, 734, 564, 1118, 630, 126, 1090, 1140, 116, 717, 598, 620, 291, 281, 1211, 943, 372, 962, 1111, 553, 1179, 35, 250, 1322, 568, 207, 920, 596, 639, 785, 395, 1092, 1075, 405, 298, 118, 465, 583, 563, 659, 780, 107, 438, 459, 581, 731, 629, 500, 604, 880, 460, 719, 554, 932, 597, 567, 853, 777, 992, 815, 237, 569, 1014, 409, 1011, 787, 1039, 686, 948, 1230, 428, 1223, 635, 485, 441, 99, 775, 996, 632, 1069, 1036, 1040, 1306, 1307, 330, 349, 695, 224, 1145, 1001, 747, 575, 665, 559, 945, 398, 339, 1247, 587, 523, 882, 471, 169, 930, 1113, 898, 744, 833, 813, 879, 967, 539, 855, 11, 415, 275, 515, 507, 1042, 525, 387, 233, 728, 1100, 537, 189, 576, 30, 1277, 953, 944, 888, 702, 696, 1109, 1073, 1038, 82, 270, 1061),
+    t2 = c(549, 335, 537, 329, 478, 624, 394, 233, 399, 340, 538, 517, 401, 812, 330, 518, 1129, 1235, 1175, 180, 235, 560, 526, 229, 1064, 542, 281, 550, 1174, 1069, 1169, 824, 872),
+    t4 = c(205, 109, 98, 738, 141, 191, 749, 140, 408, 260, 716, 701, 747, 150, 703, 224, 157, 258, 1100, 785, 702, 776, 526, 1110, 106, 246, 855, 207, 89, 900, 196, 1263, 243, 981, 435, 793, 696, 13, 572, 138, 719, 12, 832, 778, 11, 221, 325, 507, 253, 1002, 672, 741, 718, 147, 259, 1179, 704, 197, 748, 737, 742, 428, 252, 88, 783, 775, 655, 710, 688, 779, 23, 468, 780, 508, 831, 8, 189, 709, 108, 133, 429, 121, 270, 1112, 691, 380, 565, 712, 290, 126, 367, 192, 149, 631, 74, 581, 746, 781, 1097, 137, 206, 391, 1075, 974, 263, 732, 706, 151, 699, 99, 1086, 811, 407, 392, 743, 1098, 1001, 1106, 774, 361, 705, 454, 480, 132, 786, 1090, 1305),
+    t5 = c(23, 912)
+  )
+  
+  # Filters only the springs from the predefined list for the transition type
+  nasc_ids <- listas_nascentes[[coluna_pct]]
+  df_filtrado <- df[df$fid %in% nasc_ids, ]
+  
+  # Sorts in the same order as the predefined list
+  df_ordenado <- df_filtrado[match(nasc_ids, df_filtrado$fid), ]
+  
+  lista_resultado <- vector("list", nrow(df_ordenado))
+  
+  for (i in seq_along(lista_resultado)) {
+    linha <- df_ordenado[i, ]
+    propriedades <- paste(unique(linha$fid_car), collapse = ", ") # Shows fid_car
+    
+    # Loads transition image
+    img_uri <- carregar_imagem_transicao(linha$fid)
+    
+    if (!is.null(img_uri)) {
+      img_tag <- tags$img(
+        src = img_uri, 
+        style = "max-width: 150px; height: auto; margin-right: 15px; float: left;"
+      )
+    } else {
+      img_tag <- tags$div(
+        style = "width: 150px; height: 100px; margin-right: 15px; float: left; background: #f0f0f0; display: flex; align-items: center; justify-content: center;",
+        "Image not available"
+      )
+    }
+    
+    conteudo <- tags$div(
+      style = "overflow: hidden;",
+      tags$p(
+        style = "margin-top: 0;",
+        tags$strong(paste0(i, ". Spring: ", linha$fid))
+      ),
+      tags$p(
+        style = "margin: 5px 0;",
+        tags$strong("Property(ies): "), propriedades
+      )
+    )
+    
+    lista_resultado[[i]] <- tags$div(
+      style = "margin-bottom: 20px; overflow: auto;",
+      img_tag,
+      conteudo
+    )
+  }
+  
+  return(lista_resultado)
+}
+
+# --- DEFINITION OF COMPLETE PATHS ---
+file_paths <- list(
+  raster_2023 = file.path(base_path, "2023.tif"),
+  shp_apa = file.path(base_path, "apa.shp"),
+  shp_car = file.path(base_path, "car.shp"),
+  shp_nascentes = file.path(base_path, "nascentes.shp"),
+  logos = file.path(base_path, "logos_combinados.jpg"),
+  qml = file.path(base_path, "brazil_col8.qml"),
+  nascente_excel = file.path(base_path, "0001.xlsx"),
+  img_folder = file.path(base_path, "lulc_raw/resymb/tiras_lulc"),
+  save_path = file.path(base_path, "repositorio"),
+  fotos_path = file.path(base_path, "repositorio/fotos"),
+  transicao_path = transicao_path
+)
+
+# --- HELPER FUNCTIONS ---
+ensure_dir <- function(path) {
+  if(!dir.exists(path)) {
+    dir.create(path, recursive = TRUE, showWarnings = FALSE)
+    message("Directory created: ", path)
+  }
+}
+
+safe_load <- function(file_path, loader_func, ...) {
+  if(!file.exists(file_path)) {
+    warning(paste("File not found:", file_path), immediate. = TRUE)
+    return(NULL)
+  }
+  tryCatch(
+    expr = loader_func(file_path, ...),
+    error = function(e) {
+      warning(paste("Error loading", file_path, ":", e$message), immediate. = TRUE)
+      NULL
+    }
+  )
+}
+
+# --- DATA LOADING ---
+message("Loading data...")
+
+ensure_dir(file_paths$save_path)
+ensure_dir(file_paths$fotos_path)
+
+shp_apa <- safe_load(file_paths$shp_apa, st_read, quiet = TRUE)
+shp_car <- safe_load(file_paths$shp_car, st_read, quiet = TRUE)
+shp_nascentes <- safe_load(file_paths$shp_nascentes, st_read, quiet = TRUE)
+raster_2023 <- safe_load(file_paths$raster_2023, raster)
+df_nascentes <- safe_load(file_paths$nascente_excel, read_excel)
+
+logos_img <- if(file.exists(file_paths$logos)) {
+  dataURI(file = file_paths$logos, mime = "image/jpeg")
+} else {
+  warning("Logo file not found", immediate. = TRUE)
+  NULL
+}
+
+# --- FUNCTION TO EXTRACT COLORS FROM QML ---
+parse_qml_colors <- function(qml_file) {
+  if(is.null(qml_file) || !file.exists(qml_file)) {
+    message("Using default colors - QML file not found")
+    return(c(
+      "Forest Formation" = "#1f8d49",
+      "Forest Plantation" = "#7a5900",
+      "Pasture" = "#edde8e",
+      "Mosaic of Uses" = "#ffefc3",
+      "Temporary Crop" = "#C27BA0",
+      "River and Lake" = "#2532e4",
+      "Urban Area" = "#d4271e",
+      "Wetland" = "#519799",
+      "Not Observed" = "#ffffff"
+    ))
+  }
+  
+  qml <- tryCatch(
+    read_xml(qml_file),
+    error = function(e) {
+      message("Error reading QML file: ", e$message)
+      return(NULL)
+    }
+  )
+  
+  if(is.null(qml)) return(NULL)
+  
+  nodes <- xml_find_all(qml, ".//paletteEntry")
+  labels <- xml_attr(nodes, "label")
+  colors <- xml_attr(nodes, "color")
+  
+  traduz <- c(
+    "Forest Formation" = "Forest Formation",
+    "Forest Plantation" = "Forest Plantation",
+    "Pasture" = "Pasture",
+    "Mosaic of Agriculture and Pasture" = "Mosaic of Uses",
+    "Wetland" = "Wetland",
+    "Temporary Crop" = "Temporary Crop",
+    "Urban Infrastructure" = "Urban Area",
+    "Water" = "River and Lake",
+    "Not Observed" = "Not Observed"
+  )
+  
+  cores_nomeadas <- setNames(colors, labels)
+  cores_filtradas <- cores_nomeadas[names(cores_nomeadas) %in% names(traduz)]
+  nomes_traduzidos <- traduz[names(cores_filtradas)]
+  setNames(cores_filtradas, nomes_traduzidos)
+}
+
+cores_mapbiomas <- parse_qml_colors(file_paths$qml)
+
+# --- FUNCTION TO GENERATE LULC LEGEND ---
+legenda_lulc <- function() {
+  classes <- data.frame(
+    nome = c("Forest Formation", "Forest Plantation", "Pasture",
+             "Mosaic of Uses", "Temporary Crop", "River and Lake",
+             "Urban Area", "Wetland", "Not Observed"),
+    cor = c("#1f8d49", "#7a5900", "#edde8e", "#ffefc3",
+            "#C27BA0", "#2532e4", "#d4271e", "#519799", "#ffffff")
+  )
+  
+  tags$div(
+    tags$h5(class = "titulo-legenda", "Land Use and Land Cover Classes"),
+    tags$ul(
+      style = "list-style: none; padding-left: 0;",
+      lapply(1:nrow(classes), function(i) {
+        tags$li(
+          tags$span(style = paste0(
+            "display:inline-block; width: 18px; height: 18px; ",
+            "background-color:", classes$cor[i], "; ",
+            "margin-right: 8px; border: 1px solid #555;"
+          )),
+          tags$span(class = "classe-legenda", classes$nome[i])
+        )
+      })
+    )
+  )
+}
+
+# --- FUNCTION TO GENERATE TRANSITIONS LEGEND ---
+legenda_transicoes <- function() {
+  classes <- data.frame(
+    nome = c("Forest Formation Maintained", 
+             "Forest Formation Lost",
+             "Forest Formation Recovery",
+             "Water Surface Gain"),
+    cor = c("#1f8d49", "#ff0000", "#06ff00", "#4169e1")
+  )
+  
+  tags$div(
+    tags$h5(class = "titulo-legenda", "Transitions 2018-2023"),
+    tags$ul(
+      style = "list-style: none; padding-left: 0;",
+      lapply(1:nrow(classes), function(i) {
+        tags$li(
+          tags$span(style = paste0(
+            "display:inline-block; width: 18px; height: 18px; ",
+            "background-color:", classes$cor[i], "; ",
+            "margin-right: 8px; border: 1px solid #555;"
+          )),
+          tags$span(class = "classe-legenda", classes$nome[i])
+        )
+      })
+    )
+  )
+}
+
+# --- FUNCTION TO RENDER IMAGES ---
+render_image_helper <- function(nasc_id_val) {
+  nasc_id_formatted <- sprintf("%04d", as.numeric(nasc_id_val))
+  
+  if(!dir.exists(file_paths$img_folder)) {
+    return(tags$div(class = "alert alert-danger",
+                    paste("Image directory not found:", file_paths$img_folder)))
+  }
+  
+  img_patterns <- c("\\.jpg$", "\\.jpeg$", "\\.png$")
+  img_files <- NULL
+  for(pattern in img_patterns) {
+    img_files <- list.files(
+      path = file_paths$img_folder,
+      pattern = paste0("^", nasc_id_formatted, pattern),
+      ignore.case = TRUE,
+      full.names = TRUE
+    )
+    if(length(img_files) > 0) break
+  }
+  
+  if(length(img_files) > 0) {
+    tryCatch({
+      img <- image_read(img_files[1]) %>% image_scale("700x")
+      tmp_file <- tempfile(fileext = ".jpg")
+      image_write(img, tmp_file)
+      uri <- base64enc::dataURI(file = tmp_file, mime = "image/jpeg")
+      unlink(tmp_file)
+      tags$img(src = uri, style = "max-width: 100%; height: auto; border: 1px solid #ddd;")
+    }, error = function(e) {
+      tags$div(class = "alert alert-warning",
+               paste("Error loading image:", e$message))
+    })
+  } else {
+    tags$div(class = "alert alert-info",
+             paste("Image not found for spring", nasc_id_val,
+                   "in directory:", file_paths$img_folder))
+  }
+}
+
+# --- USER INTERFACE (UI) ---
+ui <- fluidPage(
+  tags$head(
+    tags$style(HTML("
+      /* Tab title text color */
+      .nav-tabs>li>a {
+        color: #42a5f5 !important;
+      }
+      
+      /* Active tab text color */
+      .nav-tabs>li.active>a {
+        color: #333 !important;
+        font-weight: bold;
+      }
+      
+      body, .form-control, .selectize-input, .leaflet-popup-content,
+      .shiny-output-error-validation, .shiny-output-error,
+      h1, h2, h3, h4, h5, h6, label, .leaflet-control, .dataTables_wrapper {
+        font-family: 'Times New Roman', serif !important;
+      }
+      
+      .titulo-principal {
+        font-size: 168% !important;
+      }
+      
+      .parte-cinza {
+        color: black !important;
+      }
+      
+      .parte-preta {
+        color: #42a5f5 !important;
+      }
+      
+      .titulo-legenda {
+        font-size: 98% !important;
+        font-weight: bold !important;
+      }
+      
+      .titulo-mudancas {
+        font-size: 156% !important;
+      }
+      
+      .input-menor label {
+        font-size: 104% !important;
+      }
+      
+      .classe-legenda {
+        font-size: 104% !important;
+      }
+      
+      .label-prop-nasc {
+        font-size: 114% !important;
+      }
+      
+      .leaflet-interactive.blink {
+        animation: blink-animation 1s infinite;
+        stroke: black !important;
+        stroke-width: 2 !important;
+        fill: #42a5f5 !important;
+        fill-opacity: 1 !important;
+      }
+      
+      @keyframes blink-animation {
+        0% { fill-opacity: 1; }
+        50% { fill-opacity: 0.2; }
+        100% { fill-opacity: 1; }
+      }
+      
+      .fid-label {
+        font-weight: bold;
+        font-size: 12px;
+        color: black;
+        text-shadow: -1px -1px 0 white, 1px -1px 0 white, -1px 1px 0 white, 1px 1px 0 white;
+      }
+      
+      .propriedades-box {
+        background-color: #f9f9f9;
+        border: 1px solid #ddd;
+        border-radius: 5px;
+        padding: 10px;
+        margin-top: 10px;
+        max-height: 300px;
+        overflow-y: auto;
+      }
+      
+      .propriedades-title {
+        color: #555555 !important;
+        font-weight: bold;
+        margin-bottom: 5px;
+      }
+      
+      .propriedades-list {
+        color: #42a5f5;
+        margin-left: 15px;
+      }
+      
+      .propriedade-item {
+        margin-bottom: 5px;
+      }
+      
+      .container-fluid {
+        max-width: 1220px !important;
+      }
+      
+      .alert {
+        padding: 10px;
+        margin-bottom: 15px;
+        border: 1px solid transparent;
+        border-radius: 4px;
+      }
+      
+      .alert-danger {
+        color: #a94442;
+        background-color: #f2dede;
+        border-color: #ebccd1;
+      }
+      
+      .alert-warning {
+        color: #8a6d3b;
+        background-color: #fcf8e3;
+        border-color: #faebcc;
+      }
+      
+      .alert-info {
+        color: #31708f;
+        background-color: #d9edf7;
+        border-color: #bce8f1;
+      }
+      
+      .foto-thumbnail {
+        max-width: 100px;
+        max-height: 100px;
+        margin-right: 10px;
+        margin-bottom: 10px;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+      }
+      
+      .foto-container {
+        display: flex;
+        flex-wrap: wrap;
+        margin-top: 10px;
+      }
+      
+      .item-transicao {
+        margin-bottom: 20px;
+        overflow: auto;
+        border-bottom: 1px solid #eee;
+        padding-bottom: 10px;
+      }
+      
+      .imagem-transicao {
+        max-width: 150px;
+        height: auto;
+        margin-right: 15px;
+        float: left;
+      }
+      
+      .conteudo-transicao {
+        overflow: hidden;
+      }
+    "))
+  ),
+  
+  if(!is.null(logos_img)) {
+    tags$img(src = logos_img, style = "width: 380px;")
+  } else {
+    tags$div(class = "alert alert-warning", "Logo not found")
+  },
+  
+  tags$h2(
+    class = "titulo-principal",
+    HTML("<span class='parte-preta'>Observatory of <span class='parte-cinza'>Land Use and Land Cover Changes in </span><br><span class='parte-preta'>Spring Areas <span class='parte-cinza'>v.1.0   <span class='parte-cinza'> - Campinas EPA</span>")
+  ),
+  
+  tabsetPanel(
+    tabPanel("Search by Spring",
+             sidebarLayout(
+               sidebarPanel(
+                 div(class = "input-menor",
+                     numericInput("nascente_id", "Spring ID (1 - 1326):", 
+                                  value = 1, min = 1, max = 1326)),
+                 uiOutput("props_for_nascente"),
+                 tags$hr(), 
+                 legenda_lulc()
+               ),
+               mainPanel(
+                 tags$h4(class = "titulo-mudancas", "Land Use and Land Cover Changes by Year"),
+                 uiOutput("image_nascente")
+               )
+             )
+    ),
+    
+    tabPanel("Search by Property",
+             sidebarLayout(
+               sidebarPanel(
+                 div(class = "input-menor",
+                     numericInput("prop_id", "Property ID (CAR) (1 - 675):", 
+                                  value = 1, min = 1, max = 675)),
+                 uiOutput("nascentes_for_prop"),
+                 tags$hr(), 
+                 legenda_lulc()
+               ),
+               mainPanel(
+                 tags$h4(class = "titulo-mudancas", "Land Use and Land Cover Changes by Year"),
+                 uiOutput("image_propriedade")
+               )
+             )
+    ),
+    
+    tabPanel("Predominant Class",
+             sidebarLayout(
+               sidebarPanel(
+                 selectInput("classe_escolhida", "Land Use and Land Cover Class:",
+                             choices = c("Forest Formation" = 3,
+                                         "Forest Plantation" = 9,
+                                         "Wetland" = 11,
+                                         "Pasture" = 15,
+                                         "Temporary Crop" = 19,
+                                         "Mosaic of Uses" = 21,
+                                         "Urban Area" = 24,
+                                         "Other Non-Vegetated Areas" = 25,
+                                         "River and Lake" = 33),
+                             selected = 3),
+                 tags$hr(),
+                 legenda_lulc()
+               ),
+               mainPanel(
+                 tags$h4("Springs with Selected Predominant Class"),
+                 uiOutput("resultado_classe")
+               )
+             )
+    ),
+    
+    tabPanel("Transitions 2018-2023",
+             sidebarLayout(
+               sidebarPanel(
+                 selectInput("tipo_transicao", "",
+                             choices = c("Forest Formation Maintained",
+                                         "Forest Formation Lost",
+                                         "Forest Formation Recovery",
+                                         "Water Surface Gain"),
+                             selected = "Forest Formation Maintained"),
+                 tags$hr(),  # Add this line to separate elements
+                 legenda_transicoes()  # Add this line to include the legend
+               ),
+               mainPanel(
+                 uiOutput("resultado_transicoes")
+               )
+             )
+    ),
+    
+    tabPanel("Map",
+             sidebarLayout(
+               sidebarPanel(
+                 width = 3,
+                 checkboxGroupInput("camadas_visiveis", "Layers:",
+                                    choices = c("Springs", "CAR", "Campinas EPA"),
+                                    selected = c("Springs", "CAR", "Campinas EPA")),
+                 textInput("ids_sel", "Search by Spring(s):", placeholder = "e.g.: 12, 45, 321"),
+                 uiOutput("propriedades_ui"),
+                 downloadButton("exportar_mapa", "Export Map (.png)", class = "btn-info")
+               ),
+               mainPanel(
+                 leafletOutput("mapa_apa", height = 600)
+               )
+             )
+    ),
+    
+    tabPanel("Identification",
+             sidebarLayout(
+               sidebarPanel(
+                 numericInput("prop_id_ident", "Property ID (CAR) (1 - 675):", 
+                              value = NA, min = 1, max = 675),
+                 uiOutput("nascentes_for_prop_ident"),
+                 numericInput("nascente_id_ident", "Spring ID (1 - 1326):", 
+                              value = 1, min = 1, max = 1326),
+                 uiOutput("props_for_nascente_ident"),
+                 uiOutput("fotos_salvas_ui")
+               ),
+               mainPanel(
+                 tags$h4("Self-Declared Characterization"),
+                 textInput("nome_nascente", "Spring Name:"),
+                 textInput("responsavel", "Responsible/Protector:"),
+                 textInput("apoiador", "Supporter:"),
+                 selectInput("cercada", "Is it Fenced?", choices = c("Yes", "No")),
+                 fileInput("fotos_nascente", "Upload new photos:", multiple = TRUE),
+                 textAreaInput("descricao", "Description:", "", rows = 3),
+                 textAreaInput("oportunidades", "What favors conservation/restoration?", "", rows = 3),
+                 textAreaInput("desafios", "What hinders conservation/restoration?", "", rows = 3),
+                 checkboxInput("consentimento", "I have read and agree with the consent form.", value = FALSE),
+                 actionButton("salvar_dados", "Save Data", class = "btn-primary")
+               )
+             )
+    ),
+    
+    tabPanel("About",
+             fluidPage(
+               tags$br(), tags$br(),
+               tags$h4("Springs Observatory 1.0", style = "text-align: left; margin-bottom: 30px;"),
+               tags$p("This open-source application was developed as part of Henrique Simões de Carvalho Costa's doctoral thesis, conducted in the Environment & Society Program, under the supervision of Dr. Simone Aparecida Vieira and Dr. Cristiana Simão Seixas, both affiliated with the Laboratory of Ecology and Ecosystem Management (LEME).
+
+The research proposal was approved by the UNICAMP Research Ethics Council / Brazil Platform (CAAE: 63225722.8.0000.8142) and received funding from the Coordination for the Improvement of Higher Education Personnel (CAPES), through a PROEX (Academic Excellence Program) scholarship, from April 1, 2020, to March 31, 2024 (Process no. 88887.502943/2020-00).
+
+Spatial analyses were conducted under the guidance of Dr. Ramon Felipe Bicudo da Silva, from the Laboratory of Spatial Analysis, Environmental Conservation and Sustainability (LAECAS), integrating Technical Training activities with a FAPESP scholarship (Process no. 2024/17486-8).
+
+Version 1.0, created in July 2025 for the Campinas Environmental Protection Area (Campinas EPA), aimed to provide rural landowners and other decision-makers with a database containing information capable of guiding the prioritization of efforts for the conservation and recovery of spring areas.",
+                      style = "text-align: justify;"),
+               tags$br(),
+               tags$p("Questions and suggestions:",
+                      style = "text-align: justify"),
+               tags$p("henriquesccosta@gmail.com",
+                      style = "text-align: justify")
+             )
+    )
+  )
+)
+
+# --- SERVER LOGIC (SERVER) ---
+server <- function(input, output, session) {
+  # Reactive data
+  df <- reactive({
+    if(is.null(df_nascentes)) {
+      showNotification("Spring data not found. Check the Excel file.", 
+                       type = "error", duration = NULL)
+      return(data.frame())
+    }
+    
+    dados <- df_nascentes
+    colnames_lower <- tolower(trimws(names(dados)))
+    fid_col <- which(colnames_lower %in% c("fid", "id"))
+    fid_car_col <- which(colnames_lower %in% c("fid_car", "id_car", "id car", "car"))
+    
+    if(length(fid_col) != 1 || length(fid_car_col) != 1) {
+      showNotification("Columns 'fid' and/or 'fid_car' not found in the data.", 
+                       type = "error", duration = NULL)
+      return(data.frame())
+    }
+    
+    names(dados)[fid_col] <- "fid"
+    names(dados)[fid_car_col] <- "fid_car"
+    
+    dados <- dados %>%
+      mutate(
+        fid = as.numeric(fid),
+        fid_car = as.numeric(fid_car)
+      )
+    
+    dados
+  })
+  
+  # Reactive shapes
+  shape_apa <- reactive({
+    if(is.null(shp_apa)) return(NULL)
+    st_transform(shp_apa, 4326)
+  })
+  
+  shape_car <- reactive({
+    if(is.null(shp_car)) return(NULL)
+    st_transform(shp_car, 4326)
+  })
+  
+  shape_nascentes <- reactive({
+    if(is.null(shp_nascentes)) return(NULL)
+    st_transform(shp_nascentes, 4326)
+  })
+  
+  # Function to load existing data for a spring
+  load_nascente_data <- function(nasc_id) {
+    dados_path <- file.path(file_paths$fotos_path, paste0("nascente_", nasc_id, "_dados.csv"))
+    if(file.exists(dados_path)) {
+      read.csv(dados_path, stringsAsFactors = FALSE)
+    } else {
+      NULL
+    }
+  }
+  
+  # Observer to load data when ID changes
+  observeEvent(input$nascente_id_ident, {
+    dados <- load_nascente_data(input$nascente_id_ident)
+    if(!is.null(dados)) {
+      updateTextInput(session, "nome_nascente", value = dados$Nome_Nascente)
+      updateTextInput(session, "responsavel", value = dados$Responsavel)
+      updateTextInput(session, "apoiador", value = dados$Apoiador)
+      updateSelectInput(session, "cercada", selected = dados$Cercada)
+      updateTextAreaInput(session, "descricao", value = dados$Descricao)
+      updateTextAreaInput(session, "oportunidades", value = dados$Oportunidades)
+      updateTextAreaInput(session, "desafios", value = dados$Desafios)
+    } else {
+      updateTextInput(session, "nome_nascente", value = "")
+      updateTextInput(session, "responsavel", value = "")
+      updateTextInput(session, "apoiador", value = "")
+      updateSelectInput(session, "cercada", selected = "No")
+      updateTextAreaInput(session, "descricao", value = "")
+      updateTextAreaInput(session, "oportunidades", value = "")
+      updateTextAreaInput(session, "desafios", value = "")
+    }
+  })
+  
+  # Store last valid values
+  last_valid_nasc_id <- reactiveVal(1)
+  last_valid_prop_id <- reactiveVal(1)
+  last_valid_prop_id_ident <- reactiveVal(1)
+  
+  # Observers for springs
+  observeEvent(input$nascente_id_ident, {
+    if(!is.na(input$nascente_id_ident)) {
+      last_valid_nasc_id(input$nascente_id_ident)
+      updateNumericInput(session, "nascente_id", value = input$nascente_id_ident)
+    }
+  }, ignoreInit = TRUE)
+  
+  observeEvent(input$nascente_id, {
+    if(!is.na(input$nascente_id)) {
+      last_valid_nasc_id(input$nascente_id)
+      updateNumericInput(session, "nascente_id_ident", value = input$nascente_id)
+    }
+  }, ignoreInit = TRUE)
+  
+  # Observers for properties
+  observeEvent(input$prop_id_ident, {
+    if(!is.na(input$prop_id_ident)) {
+      last_valid_prop_id_ident(input$prop_id_ident)
+      updateNumericInput(session, "prop_id", value = input$prop_id_ident)
+      
+      # Updates the map to highlight the property
+      proxy <- leafletProxy("mapa_apa")
+      proxy %>% clearGroup("Highlighted Property")
+      
+      if(!is.null(shape_car())) {
+        propriedade <- shape_car()[shape_car()$fid == input$prop_id_ident, ]
+        if(nrow(propriedade) > 0) {
+          proxy %>% addPolygons(
+            data = propriedade,
+            group = "Highlighted Property",
+            fillColor = "yellow",
+            fillOpacity = 0.7,
+            color = "black",
+            weight = 2,
+            highlightOptions = highlightOptions(
+              weight = 3,
+              color = "#666",
+              fillOpacity = 0.9,
+              bringToFront = TRUE
+            )
+          ) %>% 
+            flyToBounds(
+              lng1 = st_bbox(propriedade)[["xmin"]],
+              lat1 = st_bbox(propriedade)[["ymin"]],
+              lng2 = st_bbox(propriedade)[["xmax"]],
+              lat2 = st_bbox(propriedade)[["ymax"]]
+            )
+        }
+      }
+    }
+  }, ignoreInit = TRUE)
+  
+  observeEvent(input$prop_id, {
+    if(!is.na(input$prop_id)) {
+      updateNumericInput(session, "prop_id_ident", value = input$prop_id)
+    }
+  }, ignoreInit = TRUE)
+  
+  # Updates numeric inputs with correct limits
+  observe({
+    dados <- df()
+    if(nrow(dados) > 0) {
+      updateNumericInput(session, "nascente_id_ident", 
+                         min = min(dados$fid, na.rm = TRUE),
+                         max = max(dados$fid, na.rm = TRUE))
+      
+      updateNumericInput(session, "nascente_id", 
+                         min = min(dados$fid, na.rm = TRUE),
+                         max = max(dados$fid, na.rm = TRUE))
+      
+      updateNumericInput(session, "prop_id", 
+                         min = min(dados$fid_car, na.rm = TRUE),
+                         max = max(dados$fid_car, na.rm = TRUE))
+      
+      updateNumericInput(session, "prop_id_ident", 
+                         min = min(dados$fid_car, na.rm = TRUE),
+                         max = max(dados$fid_car, na.rm = TRUE))
+    }
+  })
+  
+  # Output to list springs of the selected property
+  output$nascentes_for_prop_ident <- renderUI({
+    req(input$prop_id_ident)
+    dados <- df()
+    if(nrow(dados) == 0) return(tags$p("Data not available."))
+    
+    nasc_ids <- dados %>% 
+      filter(fid_car == input$prop_id_ident) %>% 
+      pull(fid) %>% 
+      unique()
+    
+    if(length(nasc_ids) == 0) return(tags$p("No springs found for this property."))
+    
+    tagList(
+      tags$p(
+        class = "label-prop-nasc", 
+        HTML(paste0(
+          "<strong>Spring(s) in Property:</strong><br>",
+          "<div style='max-height: 100px; overflow-y: auto;'>",
+          paste(nasc_ids, collapse = ", "),
+          "</div>"
+        ))
+      ),
+      actionButton("selecionar_todas_nascentes", "Select all springs",
+                   class = "btn-sm btn-primary")
+    )
+  })
+  
+  # Observer for the select all springs button
+  observeEvent(input$selecionar_todas_nascentes, {
+    dados <- df()
+    nasc_ids <- dados %>% 
+      filter(fid_car == input$prop_id_ident) %>% 
+      pull(fid) %>% 
+      unique()
+    
+    if(length(nasc_ids) > 0) {
+      updateTextInput(session, "ids_sel", value = paste(nasc_ids, collapse = ", "))
+    }
+  })
+  
+  # --- Main Map (Topographic) ---
+  output$mapa_apa <- renderLeaflet({
+    if(is.null(shape_apa())) {
+      return(leaflet() %>% 
+               addProviderTiles("Esri.WorldTopoMap") %>%
+               setView(lng = -47.06, lat = -22.90, zoom = 11.8) %>%
+               addControl("EPA data not available", position = "topright"))
+    }
+    
+    bounds <- st_bbox(shape_apa())
+    center <- c(mean(bounds[c(1,3)]), mean(bounds[c(2,4)]))
+    
+    leaflet() %>%
+      addProviderTiles("Esri.WorldTopoMap") %>%
+      fitBounds(bounds[[1]], bounds[[2]], bounds[[3]], bounds[[4]]) %>%
+      setView(lng = center[1], lat = center[2], zoom = 11.2)
+  })
+  
+  # --- Map Updates ---
+  observe({
+    proxy <- leafletProxy("mapa_apa")
+    proxy %>% clearGroup(c("Campinas EPA", "CAR", "Springs", "Highlighted", "Markers", "Highlighted Property"))
+    
+    if ("Campinas EPA" %in% input$camadas_visiveis && !is.null(shape_apa())) {
+      proxy %>% addPolygons(
+        data = shape_apa(), 
+        fillColor = "transparent", 
+        color = "#555", 
+        weight = 1.5, 
+        group = "Campinas EPA",
+        label = "Campinas EPA"
+      )
+    }
+    
+    if ("CAR" %in% input$camadas_visiveis && !is.null(shape_car())) {
+      proxy %>% addPolygons(
+        data = shape_car(), 
+        fillColor = "lightgray", 
+        fillOpacity = 0.2, 
+        color = "#666", 
+        weight = 2, 
+        group = "CAR",
+        label = ~paste("Property:", fid)
+      )
+    }
+    
+    if ("Springs" %in% input$camadas_visiveis && !is.null(shape_nascentes())) {
+      proxy %>% addPolygons(
+        data = shape_nascentes(), 
+        fillColor = "transparent", 
+        color = "black", 
+        weight = 1, 
+        group = "Springs",
+        label = ~paste("Spring FID:", fid)
+      )
+    }
+    
+    if (!is.null(input$ids_sel) && input$ids_sel != "" && !is.null(shape_nascentes())) {
+      ids <- as.numeric(unlist(strsplit(input$ids_sel, ",\\s*")))
+      feicoes <- shape_nascentes()[shape_nascentes()$fid %in% ids, ]
+      
+      if (nrow(feicoes) > 0) {
+        bbox <- st_bbox(feicoes)
+        
+        # Calculates 40% of the original bounding box size (closer zoom)
+        width <- bbox[3] - bbox[1]
+        height <- bbox[4] - bbox[2]
+        
+        # Reduces the bounding box size by 40%
+        bbox_zoom <- bbox + c(
+          width * 0.2,  # Increases left limit (20% from each side = 40% total)
+          height * 0.2, # Increases bottom limit
+          -width * 0.2, # Decreases right limit
+          -height * 0.2 # Decreases top limit
+        )
+        
+        proxy %>% 
+          flyToBounds(bbox_zoom[[1]], bbox_zoom[[2]], bbox_zoom[[3]], bbox_zoom[[4]], 
+                      options = list(padding = c(50, 50), duration = 1)) %>%
+          addPolygons(
+            data = feicoes, 
+            group = "Highlighted",
+            fillColor = "#42a5f5",
+            fillOpacity = 0.7,
+            color = "black",
+            weight = 1,
+            options = pathOptions(className = "blink"),
+            label = ~paste("Spring FID:", fid)
+          )
+        
+        centroides <- st_centroid(feicoes)
+        flag_icon <- makeIcon(
+          iconUrl = "data:image/svg+xml;charset=UTF-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='30' height='30' viewBox='0 0 30 30'%3E%3Cpath fill='%2342a5f5' d='M15 3L5 15l10 12 10-12z'/%3E%3Cpath fill='%2342a5f5' d='M15 3v24' stroke='%2342a5f5' stroke-width='0.5'/%3E%3Cpath fill='%2342a5f5' d='M15 3l6 7H9z'/%3E%3C/svg%3E",
+          iconWidth = 30,
+          iconHeight = 30,
+          iconAnchorX = 15,
+          iconAnchorY = 30
+        )
+        
+        for (i in 1:nrow(centroides)) {
+          coords <- st_coordinates(centroides[i,])
+          proxy %>% addMarkers(
+            lng = coords[1, "X"],
+            lat = coords[1, "Y"],
+            label = as.character(centroides$fid[i]),
+            labelOptions = labelOptions(
+              noHide = TRUE,
+              direction = "top",
+              className = "fid-label",
+              offset = c(0, -20)
+            ),
+            icon = flag_icon,
+            group = "Markers"
+          )
+        }
+      }
+    }
+    
+    # Highlight property selected in the identification tab
+    if(!is.null(input$prop_id_ident) && !is.na(input$prop_id_ident) && !is.null(shape_car())) {
+      propriedade <- shape_car()[shape_car()$fid == input$prop_id_ident, ]
+      if(nrow(propriedade) > 0) {
+        proxy %>% addPolygons(
+          data = propriedade,
+          group = "Highlighted Property",
+          fillColor = "yellow",
+          fillOpacity = 0.7,
+          color = "black",
+          weight = 2,
+          highlightOptions = highlightOptions(
+            weight = 3,
+            color = "#666",
+            fillOpacity = 0.9,
+            bringToFront = TRUE
+          )
+        )
+      }
+    }
+  })
+  
+  # Export map
+  output$exportar_mapa <- downloadHandler(
+    filename = function() {
+      paste0("map_apa_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".png")
+    },
+    content = function(file) {
+      showNotification("Preparing map for export...", duration = NULL, id = "export-notif")
+      
+      map <- leaflet() %>%
+        addProviderTiles("Esri.WorldTopoMap")
+      
+      if (!is.null(input$ids_sel) && input$ids_sel != "" && !is.null(shape_nascentes())) {
+        ids <- as.numeric(unlist(strsplit(input$ids_sel, ",\\s*")))
+        feicoes <- shape_nascentes()[shape_nascentes()$fid %in% ids, ]
+        if (nrow(feicoes) > 0) {
+          bbox <- st_bbox(feicoes)
+          bbox_exp <- bbox + c(-0.3*(bbox[3]-bbox[1]), -0.3*(bbox[4]-bbox[2]),
+                               0.3*(bbox[3]-bbox[1]), 0.3*(bbox[4]-bbox[2]))
+          map <- map %>% fitBounds(bbox_exp[1], bbox_exp[2], bbox_exp[3], bbox_exp[4])
+        } else if (!is.null(shape_apa())) {
+          bounds <- st_bbox(shape_apa())
+          map <- map %>% fitBounds(bounds[[1]], bounds[[2]], bounds[[3]], bounds[[4]])
+        }
+      } else if (!is.null(shape_apa())) {
+        bounds <- st_bbox(shape_apa())
+        map <- map %>% fitBounds(bounds[[1]], bounds[[2]], bounds[[3]], bounds[[4]])
+      }
+      
+      if ("Campinas EPA" %in% input$camadas_visiveis && !is.null(shape_apa())) {
+        map <- map %>% addPolygons(
+          data = shape_apa(), 
+          color = "#555", 
+          weight = 1.5, 
+          fillOpacity = 0,
+          label = "Campinas EPA"
+        )
+      }
+      
+      if ("CAR" %in% input$camadas_visiveis && !is.null(shape_car())) {
+        map <- map %>% addPolygons(
+          data = shape_car(), 
+          color = "#666", 
+          weight = 2, 
+          fillColor = "lightgray", 
+          fillOpacity = 0.2,
+          label = ~paste("Property:", fid_car)
+        )
+      }
+      
+      if ("Springs" %in% input$camadas_visiveis && !is.null(shape_nascentes())) {
+        map <- map %>% addPolygons(
+          data = shape_nascentes(), 
+          color = "black", 
+          weight = 1, 
+          fillOpacity = 0,
+          label = ~paste("Spring FID:", fid)
+        )
+      }
+      
+      if (!is.null(input$ids_sel) && input$ids_sel != "" && !is.null(shape_nascentes())) {
+        ids <- as.numeric(unlist(strsplit(input$ids_sel, ",\\s*")))
+        feicoes <- shape_nascentes()[shape_nascentes()$fid %in% ids, ]
+        if (nrow(feicoes) > 0) {
+          map <- map %>% addPolygons(
+            data = feicoes, 
+            fillColor = "#42a5f5",
+            fillOpacity = 0.7,
+            color = "black",
+            weight = 1,
+            label = ~paste("Spring FID:", fid)
+          )
+          
+          flag_icon <- makeIcon(
+            iconUrl = "data:image/svg+xml;charset=UTF-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='30' height='30' viewBox='0 0 30 30'%3E%3Cpath fill='%2342a5f5' d='M15 3L5 15l10 12 10-12z'/%3E%3Cpath fill='%2342a5f5' d='M15 3v24' stroke='%2342a5f5' stroke-width='0.5'/%3E%3Cpath fill='%2342a5f5' d='M15 3l6 7H9z'/%3E%3C/svg%3E",
+            iconWidth = 30,
+            iconHeight = 30,
+            iconAnchorX = 15,
+            iconAnchorY = 30
+          )
+          
+          centroides <- st_centroid(feicoes)
+          for (i in 1:nrow(centroides)) {
+            coords <- st_coordinates(centroides[i,])
+            map <- map %>% addMarkers(
+              lng = coords[1, "X"],
+              lat = coords[1, "Y"],
+              label = as.character(centroides$fid[i]),
+              labelOptions = labelOptions(
+                noHide = TRUE,
+                direction = "top",
+                className = "fid-label",
+                offset = c(0, -20)
+              ),
+              icon = flag_icon
+            )
+          }
+        }
+      }
+      
+      # Adds highlighted property if exists
+      if(!is.null(input$prop_id_ident) && !is.na(input$prop_id_ident) && !is.null(shape_car())) {
+        propriedade <- shape_car()[shape_car()$fid == input$prop_id_ident, ]
+        if(nrow(propriedade) > 0) {
+          map <- map %>% addPolygons(
+            data = propriedade,
+            fillColor = "yellow",
+            fillOpacity = 0.7,
+            color = "black",
+            weight = 2,
+            highlightOptions = highlightOptions(
+              weight = 3,
+              color = "#666",
+              fillOpacity = 0.9,
+              bringToFront = TRUE
+            )
+          )
+        }
+      }
+      
+      mapshot(map, file = file)
+      removeNotification("export-notif")
+    }
+  )
+  
+  # Outputs for properties/springs
+  output$props_for_nascente <- renderUI({
+    req(input$nascente_id)
+    dados <- df()
+    if(nrow(dados) == 0) return(tags$p("Data not available."))
+    
+    props <- dados %>% 
+      filter(fid == input$nascente_id) %>% 
+      pull(fid_car) %>% 
+      unique()
+    
+    if(length(props) == 0) return(tags$p("No properties found for this spring."))
+    
+    tags$p(
+      class = "label-prop-nasc", 
+      HTML(paste0(
+        "<strong>Property(ies):</strong><br>",
+        "<span style='color: #5a7ca9;'>", paste(props, collapse = ", "), "</span>"
+      ))
+    )
+  })
+  
+  output$props_for_nascente_ident <- renderUI({
+    req(input$nascente_id_ident)
+    dados <- df()
+    if(nrow(dados) == 0) return(tags$p("Data not available."))
+    
+    props <- dados %>% 
+      filter(fid == input$nascente_id_ident) %>% 
+      pull(fid_car) %>% 
+      unique()
+    
+    if(length(props) == 0) return(tags$p("No properties found for this spring."))
+    
+    tags$p(
+      class = "label-prop-nasc", 
+      HTML(paste0(
+        "<strong>Property(ies):</strong><br>",
+        "<span style='color: #5a7ca9;'>", paste(props, collapse = ", "), "</span>"
+      ))
+    )
+  })
+  
+  output$nascentes_for_prop <- renderUI({
+    req(input$prop_id)
+    dados <- df()
+    if(nrow(dados) == 0) return(tags$p("Data not available."))
+    
+    nasc_ids <- dados %>% 
+      filter(fid_car == input$prop_id) %>% 
+      pull(fid) %>% 
+      unique()
+    
+    if(length(nasc_ids) == 0) return(tags$p("No springs found for this property."))
+    
+    tags$p(
+      class = "label-prop-nasc", 
+      HTML(paste0(
+        "<strong>Spring(s) in Property:</strong><br>",
+        "<div style='max-height: 100px; overflow-y: auto;'>",
+        paste(nasc_ids, collapse = ", "),
+        "</div>"
+      ))
+    )
+  })
+  
+  # Image rendering
+  output$image_nascente <- renderUI({
+    req(input$nascente_id)
+    tagList(
+      tags$div(
+        style = "display: flex; justify-content: space-between; max-width: 700px; margin-bottom: 10px;",
+        lapply(2016:2025, function(ano) tags$span(ano))
+      ),
+      render_image_helper(input$nascente_id)
+    )
+  })
+  
+  output$image_propriedade <- renderUI({
+    req(input$prop_id)
+    dados <- df()
+    if(nrow(dados) == 0) return(tags$p("Data not available."))
+    
+    nasc_ids <- dados %>% 
+      filter(fid_car == input$prop_id) %>% 
+      pull(fid) %>% 
+      unique()
+    
+    if(length(nasc_ids) == 0) return(tags$p("No springs found for this property."))
+    
+    # Create UI element list for each spring
+    ui_elements <- lapply(nasc_ids, function(nid) {
+      tagList(
+        tags$hr(),
+        tags$h5(paste("Spring", nid)),
+        tags$div(
+          style = "display: flex; justify-content: space-between; max-width: 700px; margin-bottom: 10px;",
+          lapply(2016:2025, function(ano) tags$span(ano))
+        ),
+        render_image_helper(nid)
+      )
+    })
+    
+    # Return all combined UI elements
+    do.call(tagList, ui_elements)
+  })
+  
+  # Display of saved photos
+  output$fotos_salvas_ui <- renderUI({
+    req(input$nascente_id_ident)
+    
+    # Lists photo files
+    fotos <- list.files(
+      path = file_paths$fotos_path,
+      pattern = paste0("nascente_", input$nascente_id_ident, "_foto\\d+_.*\\.(jpg|jpeg|png)"),
+      full.names = TRUE
+    )
+    
+    # If no photos, return message
+    if (length(fotos) == 0) {
+      return(tags$p("No photos saved for this spring."))
+    }
+    
+    # Builds the UI
+    tagList(
+      tags$h5("Saved photos:"),
+      tags$div(
+        class = "foto-container",
+        lapply(fotos, function(foto) {
+          tags$img(
+            src = dataURI(file = foto, mime = "image/jpeg"), 
+            class = "foto-thumbnail",
+            onclick = paste0("window.open('", dataURI(file = foto, mime = "image/jpeg"), "', '_blank')")
+          )
+        })
+      )
+    )
+  })
+  
+  # Save data
+  observeEvent(input$salvar_dados, {
+    if(!input$consentimento) {
+      showNotification("Please check the consent box to save data.", type = "warning")
+      return()
+    }
+    
+    dados_salvar <- data.frame(
+      ID_Nascente = input$nascente_id_ident,
+      Nome_Nascente = input$nome_nascente,
+      Responsavel = input$responsavel,
+      Apoiador = input$apoiador,
+      Cercada = input$cercada,
+      Descricao = input$descricao,
+      Oportunidades = input$oportunidades,
+      Desafios = input$desafios,
+      Data_Registro = format(Sys.time(), "%Y-%m-%d %H:%M:%S"),
+      stringsAsFactors = FALSE
+    )
+    
+    file_name <- paste0("nascente_", input$nascente_id_ident, "_dados.csv")
+    write.csv(dados_salvar, file = file.path(file_paths$fotos_path, file_name), row.names = FALSE)
+    
+    if(!is.null(input$fotos_nascente)) {
+      old_photos <- list.files(
+        path = file_paths$fotos_path,
+        pattern = paste0("nascente_", input$nascente_id_ident, "_foto\\d+_.*\\.(jpg|jpeg|png)"),
+        full.names = TRUE
+      )
+      if(length(old_photos) > 0) file.remove(old_photos)
+      
+      sapply(1:nrow(input$fotos_nascente), function(i) {
+        file_ext <- tools::file_ext(input$fotos_nascente$name[i])
+        foto_nome <- paste0("nascente_", input$nascente_id_ident, "_foto", i, "_", 
+                            format(Sys.time(), "%Y%m%d_%H%M%S"), ".", file_ext)
+        file.copy(input$fotos_nascente$datapath[i], 
+                  file.path(file_paths$fotos_path, foto_nome))
+      })
+    }
+    
+    showModal(modalDialog(
+      title = "Success",
+      "Data and photos saved successfully!",
+      easyClose = TRUE,
+      footer = modalButton("Close")
+    ))
+    
+    # Updates photo display
+    output$fotos_salvas_ui <- renderUI({
+      fotos <- list.files(
+        path = file_paths$fotos_path,
+        pattern = paste0("nascente_", input$nascente_id_ident, "_foto\\d+_.*\\.(jpg|jpeg|png)"),
+        full.names = TRUE
+      )
+      
+      if(length(fotos) > 0) {
+        tagList(
+          tags$h5("Saved photos:"),
+          tags$div(
+            class = "foto-container",
+            lapply(fotos, function(foto) {
+              tags$img(
+                src = dataURI(file = foto, mime = "image/jpeg"), 
+                class = "foto-thumbnail",
+                onclick = paste0("window.open('", dataURI(file = foto, mime = "image/jpeg"), "', '_blank')")
+              )
+            })
+          )
+        )
+      } else {
+        tags$p("No photos saved for this spring.")
+      }
+    })
+  })
+  
+  # Output for transitions
+  output$resultado_transicoes <- renderUI({
+    req(input$tipo_transicao)
+    
+    dados <- df()
+    if (nrow(dados) == 0) return(tags$p("Data not available."))
+    
+    lista <- gerar_lista_transicoes(dados, input$tipo_transicao)
+    
+    if(length(lista) == 0) {
+      return(tags$div(
+        class = "alert alert-info",
+        paste("No springs found with transition type:", input$tipo_transicao)
+      ))
+    }
+    
+    tagList(
+      tags$div(
+        style = "margin-bottom: 20px;",
+        tags$strong(paste("Springs with this transition:", length(lista)))
+      ),
+      lista
+    )
+  })
+  
+  # Output for predominant class
+  output$resultado_classe <- renderUI({
+    req(input$classe_escolhida)
+    
+    dados <- df()
+    if (nrow(dados) == 0) return(tags$p("Data not available."))
+    
+    lista <- gerar_lista_predominancia(dados, as.numeric(input$classe_escolhida))
+    
+    if(length(lista) == 1 && grepl("No springs found", lista[[1]])) {
+      return(tags$div(class = "alert alert-info", lista[[1]]))
+    }
+    
+    tagList(
+      tags$div(
+        style = "margin-bottom: 20px;",
+        tags$strong(paste("Total springs with this predominant class:", length(lista)))
+      ),
+      lapply(lista, function(item) {
+        tags$pre(item)
+      })
+    )
+  })
+  
+  # Additional outputs
+  output$feicoes_predominantes <- renderDataTable({
+    datatable(data.frame(), options = list(pageLength = 5))
+  })
+  
+  output$grafico_classe <- renderPlotly({
+    plot_ly() %>% add_annotations(text = "Example chart", showarrow = FALSE)
+  })
+  
+  output$mapa_classe <- renderLeaflet({
+    leaflet() %>% addTiles() %>% setView(lng = -47.06, lat = -22.90, zoom = 11.5)
+  })
+  
+  output$plot_raster_viz <- renderPlot({
+    plot(1,1, type = "n", xlab = "", ylab = "", axes = FALSE)
+    text(1,1, "Raster visualization here", cex = 1.5)
+  })
+}
+
+# --- APPLICATION EXECUTION ---
+shinyApp(ui, server)
